@@ -493,6 +493,7 @@ name = "moira-host"
 version = "0.1.0"
 dependencies = [
  "moira-core",
+ "moira-protocol",
 ]
 
 [[package]]
