@@ -1,0 +1,35 @@
+[package]
+name = "moira-tui-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Standalone interactive and headless CLI for moira-tui"
+
+[[bin]]
+name = "moira-tui"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+moira-tui = { path = ".." }
+moira-tui-local-client = { path = "../local-client" }
+moira-client = { version = "=0.1.0", path = "../../moira/crates/moira-client" }
+moira-protocol = { version = "=0.1.0", path = "../../moira/crates/moira-protocol" }
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = "=0.29.0"
+serde_json = "=1.0.151"
+
+[dev-dependencies]
+moira-core = { version = "=0.0.1", path = "../../moira" }
+moira-local-daemon = { version = "=0.1.0", path = "../../moira/crates/moira-local-daemon" }
+moira-service = { version = "=0.1.0", path = "../../moira/crates/moira-service" }
+moira-sqlite = { version = "=0.0.1", path = "../../moira/adapters/moira-sqlite" }
+moira-wire = { version = "=0.1.0", path = "../../moira/crates/moira-wire" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

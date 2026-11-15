@@ -1,0 +1,257 @@
+//! Composable, read-only Ratatui presentation over Moira's public saga client.
+#![forbid(unsafe_code)]
+
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use moira_client::{SagaReadOnlyClient, SagaServicePort};
+use moira_protocol::{SagaIdV1, SagaOutcomeV1, SagaReconciliationViewV1, SagaReplyV1, SagaViewV1};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Layout, Rect},
+    text::Line,
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+};
+
+const PAGE_LIMIT: u64 = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityManifest {
+    pub schema: u8,
+    pub peer: &'static str,
+    pub interactive: &'static [&'static str],
+    pub headless: &'static [&'static str],
+}
+
+pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
+    schema: 1,
+    peer: "moira",
+    interactive: &["sagas.inspect.v1", "sagas.reconciliation.v1"],
+    headless: &["sagas.inspect.v1"],
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Input {
+    Up,
+    Down,
+    Open,
+    Back,
+    Refresh,
+    Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Lifecycle {
+    Running,
+    CloseRequested,
+}
+
+pub fn translate_key(key: KeyEvent) -> Option<Input> {
+    if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+        return None;
+    }
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Input::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Input::Down),
+        KeyCode::Enter => Some(Input::Open),
+        KeyCode::Esc | KeyCode::Backspace => Some(Input::Back),
+        KeyCode::Char('r') => Some(Input::Refresh),
+        KeyCode::Char('q') => Some(Input::Close),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Request {
+    Inspect,
+    Reconciliation(SagaIdV1),
+}
+
+struct WorkerReply {
+    request: Request,
+    reply: Result<SagaReplyV1, ()>,
+}
+
+pub struct Component {
+    requests: SyncSender<Request>,
+    replies: Receiver<WorkerReply>,
+    pending: Option<Request>,
+    sagas: Vec<SagaViewV1>,
+    selected: usize,
+    detail: Option<SagaReconciliationViewV1>,
+    truncated: bool,
+    notice: String,
+}
+
+impl Component {
+    pub fn new<P>(port: P) -> Self
+    where
+        P: SagaServicePort + Send + 'static,
+        P::Error: Send + 'static,
+    {
+        let (request_tx, request_rx) = sync_channel::<Request>(1);
+        let (reply_tx, reply_rx) = sync_channel::<WorkerReply>(1);
+        std::thread::spawn(move || {
+            let mut client = SagaReadOnlyClient::new(port);
+            while let Ok(request) = request_rx.recv() {
+                let reply = match request {
+                    Request::Inspect => client.inspect(None, PAGE_LIMIT),
+                    Request::Reconciliation(saga) => client.reconciliation(saga),
+                }
+                .map_err(|_| ());
+                if reply_tx.send(WorkerReply { request, reply }).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut component = Self {
+            requests: request_tx,
+            replies: reply_rx,
+            pending: None,
+            sagas: Vec::new(),
+            selected: 0,
+            detail: None,
+            truncated: false,
+            notice: "Moira ready; refresh queued".into(),
+        };
+        component.offer(Request::Inspect);
+        component
+    }
+
+    pub fn poll(&mut self) {
+        loop {
+            match self.replies.try_recv() {
+                Ok(reply) => self.admit(reply),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.pending = None;
+                    self.notice = "Moira worker unavailable".into();
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn update(&mut self, input: Input, focused: bool) -> Lifecycle {
+        if !focused {
+            return Lifecycle::Running;
+        }
+        match input {
+            Input::Close => return Lifecycle::CloseRequested,
+            Input::Refresh => {
+                let request = self
+                    .detail
+                    .map(|detail| Request::Reconciliation(detail.saga.saga))
+                    .unwrap_or(Request::Inspect);
+                self.offer(request);
+            }
+            Input::Open if self.detail.is_none() => {
+                if let Some(saga) = self.sagas.get(self.selected) {
+                    self.offer(Request::Reconciliation(saga.saga));
+                }
+            }
+            Input::Back => self.detail = None,
+            Input::Up => self.move_selection(false),
+            Input::Down => self.move_selection(true),
+            Input::Open => {}
+        }
+        Lifecycle::Running
+    }
+
+    pub fn draw_in(&self, frame: &mut Frame<'_>, area: Rect, focused: bool) {
+        let [body, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        let title = if focused {
+            " Moira • focused "
+        } else {
+            " Moira "
+        };
+        if let Some(detail) = self.detail {
+            let lines = vec![
+                Line::from(format!("saga: {:?}", detail.saga.saga)),
+                Line::from(format!("phase: {:?}", detail.saga.phase)),
+                Line::from(format!(
+                    "automatic progress: {:?}",
+                    detail.automatic_progress
+                )),
+                Line::from(format!(
+                    "confirmed revision: {}",
+                    detail.last_confirmed_revision
+                )),
+                Line::from(format!("retained evidence: {}", detail.retained_evidence)),
+                Line::from(format!("fence: {:?}", detail.fence)),
+            ];
+            frame.render_widget(
+                Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
+                body,
+            );
+        } else {
+            let items = self
+                .sagas
+                .iter()
+                .enumerate()
+                .map(|(index, saga)| {
+                    let marker = if index == self.selected { ">" } else { " " };
+                    ListItem::new(format!("{marker} {:?}  {:?}", saga.saga, saga.phase))
+                })
+                .collect::<Vec<_>>();
+            frame.render_widget(
+                List::new(items).block(Block::default().title(title).borders(Borders::ALL)),
+                body,
+            );
+        }
+        frame.render_widget(Paragraph::new(self.notice.as_str()), footer);
+    }
+
+    fn offer(&mut self, request: Request) {
+        if self.pending.is_some() {
+            self.notice = "Moira request already pending".into();
+        } else if self.requests.try_send(request).is_ok() {
+            self.pending = Some(request);
+            self.notice = "Moira refresh pending".into();
+        } else {
+            self.notice = "Moira worker unavailable".into();
+        }
+    }
+
+    fn admit(&mut self, worker: WorkerReply) {
+        self.pending = None;
+        match worker.reply {
+            Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Page(page)))
+                if worker.request == Request::Inspect =>
+            {
+                self.sagas = page.entries;
+                self.selected = self.selected.min(self.sagas.len().saturating_sub(1));
+                self.truncated = page.next_after.is_some();
+                self.notice = if self.truncated {
+                    "Bounded saga page; more entries available".into()
+                } else {
+                    format!("{} saga(s)", self.sagas.len())
+                };
+            }
+            Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Reconciliation(Some(detail)))) => {
+                self.detail = Some(detail);
+                self.notice = "Current reconciliation view".into();
+            }
+            Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Reconciliation(None))) => {
+                self.notice = "Saga no longer available".into();
+            }
+            Ok(SagaReplyV1::Refused(refusal)) => {
+                self.notice = format!("Moira refused: {refusal:?}");
+            }
+            Ok(SagaReplyV1::Accepted(_)) => self.notice = "Invalid Moira reply".into(),
+            Err(()) => self.notice = "Moira service unavailable; outcome not inferred".into(),
+        }
+    }
+
+    fn move_selection(&mut self, down: bool) {
+        if self.detail.is_some() || self.sagas.is_empty() {
+            return;
+        }
+        if down {
+            self.selected = (self.selected + 1).min(self.sagas.len() - 1);
+        } else {
+            self.selected = self.selected.saturating_sub(1);
+        }
+    }
+}

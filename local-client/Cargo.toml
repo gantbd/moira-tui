@@ -1,0 +1,19 @@
+[package]
+name = "moira-tui-local-client"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Bounded private Unix client for Moira terminal hosts"
+
+[dependencies]
+moira-client = { version = "=0.1.0", path = "../../moira/crates/moira-client" }
+moira-protocol = { version = "=0.1.0", path = "../../moira/crates/moira-protocol" }
+moira-wire = { version = "=0.1.0", path = "../../moira/crates/moira-wire" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
