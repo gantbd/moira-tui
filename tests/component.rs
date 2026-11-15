@@ -2,8 +2,8 @@ use std::{thread, time::Duration};
 
 use moira_client::SagaServicePort;
 use moira_protocol::{
-    SagaCommandV1, SagaIdV1, SagaOutcomeV1, SagaPageV1, SagaPhaseV1, SagaReplyV1, SagaViewV1,
-    TimerIdV1,
+    SagaCensusV1, SagaCommandV1, SagaIdV1, SagaOutcomeV1, SagaPageV1, SagaPhaseV1, SagaReplyV1,
+    SagaViewV1, TimerIdV1,
 };
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -29,6 +29,17 @@ impl SagaServicePort for Port {
                     next_after: None,
                 })))
             }
+            SagaCommandV1::Census => {
+                Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Census(SagaCensusV1 {
+                    total: 1,
+                    runnable_effects: 1,
+                    awaiting_decision: 0,
+                    fenced: 0,
+                    terminal: 0,
+                    retries_consumed: 0,
+                    saturated: false,
+                })))
+            }
             _ => panic!("unexpected component request"),
         }
     }
@@ -52,6 +63,7 @@ fn component_renders_public_saga_projection() {
             .collect::<String>();
         if rendered.contains("ForwardPending") {
             assert!(rendered.contains("SagaIdV1(7)"));
+            assert!(rendered.contains("census total 1 runnable 1"));
             return;
         }
         thread::sleep(Duration::from_millis(1));

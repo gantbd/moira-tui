@@ -5,7 +5,10 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use moira_client::{SagaReadOnlyClient, SagaServicePort};
-use moira_protocol::{SagaIdV1, SagaOutcomeV1, SagaReconciliationViewV1, SagaReplyV1, SagaViewV1};
+use moira_protocol::{
+    SagaCensusV1, SagaIdV1, SagaOutcomeV1, SagaPageV1, SagaReconciliationViewV1, SagaReplyV1,
+    SagaViewV1,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -69,7 +72,21 @@ enum Request {
 
 struct WorkerReply {
     request: Request,
-    reply: Result<SagaReplyV1, ()>,
+    reply: Result<WorkerObservation, WorkerFailure>,
+}
+
+enum WorkerFailure {
+    Refused(String),
+    InvalidReply,
+    Transport,
+}
+
+enum WorkerObservation {
+    Inspect {
+        page: SagaPageV1,
+        census: SagaCensusV1,
+    },
+    Reconciliation(Option<SagaReconciliationViewV1>),
 }
 
 pub struct Component {
@@ -78,6 +95,7 @@ pub struct Component {
     pending: Option<Request>,
     sagas: Vec<SagaViewV1>,
     selected: usize,
+    census: Option<SagaCensusV1>,
     detail: Option<SagaReconciliationViewV1>,
     truncated: bool,
     notice: String,
@@ -95,10 +113,9 @@ impl Component {
             let mut client = SagaReadOnlyClient::new(port);
             while let Ok(request) = request_rx.recv() {
                 let reply = match request {
-                    Request::Inspect => client.inspect(None, PAGE_LIMIT),
-                    Request::Reconciliation(saga) => client.reconciliation(saga),
-                }
-                .map_err(|_| ());
+                    Request::Inspect => inspect(&mut client),
+                    Request::Reconciliation(saga) => reconciliation(&mut client, saga),
+                };
                 if reply_tx.send(WorkerReply { request, reply }).is_err() {
                     break;
                 }
@@ -110,6 +127,7 @@ impl Component {
             pending: None,
             sagas: Vec::new(),
             selected: 0,
+            census: None,
             detail: None,
             truncated: false,
             notice: "Moira ready; refresh queued".into(),
@@ -186,15 +204,29 @@ impl Component {
                 body,
             );
         } else {
-            let items = self
-                .sagas
-                .iter()
-                .enumerate()
-                .map(|(index, saga)| {
-                    let marker = if index == self.selected { ">" } else { " " };
-                    ListItem::new(format!("{marker} {:?}  {:?}", saga.saga, saga.phase))
-                })
-                .collect::<Vec<_>>();
+            let mut items = Vec::new();
+            if let Some(census) = self.census {
+                items.push(ListItem::new(format!(
+                    "census total {} runnable {} awaiting {} fenced {} terminal {} retries {}{}",
+                    census.total,
+                    census.runnable_effects,
+                    census.awaiting_decision,
+                    census.fenced,
+                    census.terminal,
+                    census.retries_consumed,
+                    if census.saturated { "+" } else { "" }
+                )));
+            }
+            items.extend(
+                self.sagas
+                    .iter()
+                    .enumerate()
+                    .map(|(index, saga)| {
+                        let marker = if index == self.selected { ">" } else { " " };
+                        ListItem::new(format!("{marker} {:?}  {:?}", saga.saga, saga.phase))
+                    })
+                    .collect::<Vec<_>>(),
+            );
             frame.render_widget(
                 List::new(items).block(Block::default().title(title).borders(Borders::ALL)),
                 body,
@@ -217,10 +249,11 @@ impl Component {
     fn admit(&mut self, worker: WorkerReply) {
         self.pending = None;
         match worker.reply {
-            Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Page(page)))
+            Ok(WorkerObservation::Inspect { page, census })
                 if worker.request == Request::Inspect =>
             {
                 self.sagas = page.entries;
+                self.census = Some(census);
                 self.selected = self.selected.min(self.sagas.len().saturating_sub(1));
                 self.truncated = page.next_after.is_some();
                 self.notice = if self.truncated {
@@ -229,18 +262,21 @@ impl Component {
                     format!("{} saga(s)", self.sagas.len())
                 };
             }
-            Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Reconciliation(Some(detail)))) => {
+            Ok(WorkerObservation::Reconciliation(Some(detail))) => {
                 self.detail = Some(detail);
                 self.notice = "Current reconciliation view".into();
             }
-            Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Reconciliation(None))) => {
+            Ok(WorkerObservation::Reconciliation(None)) => {
                 self.notice = "Saga no longer available".into();
             }
-            Ok(SagaReplyV1::Refused(refusal)) => {
-                self.notice = format!("Moira refused: {refusal:?}");
+            Err(WorkerFailure::Refused(refusal)) => {
+                self.notice = format!("Moira refused: {refusal}");
             }
-            Ok(SagaReplyV1::Accepted(_)) => self.notice = "Invalid Moira reply".into(),
-            Err(()) => self.notice = "Moira service unavailable; outcome not inferred".into(),
+            Err(WorkerFailure::InvalidReply) => self.notice = "Invalid Moira reply".into(),
+            Err(WorkerFailure::Transport) => {
+                self.notice = "Moira service unavailable; outcome not inferred".into();
+            }
+            Ok(_) => self.notice = "Invalid Moira reply".into(),
         }
     }
 
@@ -253,5 +289,44 @@ impl Component {
         } else {
             self.selected = self.selected.saturating_sub(1);
         }
+    }
+}
+
+fn inspect<P: SagaServicePort>(
+    client: &mut SagaReadOnlyClient<P>,
+) -> Result<WorkerObservation, WorkerFailure> {
+    let page = match client
+        .inspect(None, PAGE_LIMIT)
+        .map_err(|_| WorkerFailure::Transport)?
+    {
+        SagaReplyV1::Accepted(SagaOutcomeV1::Page(page)) => page,
+        SagaReplyV1::Refused(refusal) => {
+            return Err(WorkerFailure::Refused(format!("{refusal:?}")));
+        }
+        _ => return Err(WorkerFailure::InvalidReply),
+    };
+    let census = match client.census().map_err(|_| WorkerFailure::Transport)? {
+        SagaReplyV1::Accepted(SagaOutcomeV1::Census(census)) => census,
+        SagaReplyV1::Refused(refusal) => {
+            return Err(WorkerFailure::Refused(format!("{refusal:?}")));
+        }
+        _ => return Err(WorkerFailure::InvalidReply),
+    };
+    Ok(WorkerObservation::Inspect { page, census })
+}
+
+fn reconciliation<P: SagaServicePort>(
+    client: &mut SagaReadOnlyClient<P>,
+    saga: SagaIdV1,
+) -> Result<WorkerObservation, WorkerFailure> {
+    match client
+        .reconciliation(saga)
+        .map_err(|_| WorkerFailure::Transport)?
+    {
+        SagaReplyV1::Accepted(SagaOutcomeV1::Reconciliation(detail)) => {
+            Ok(WorkerObservation::Reconciliation(detail))
+        }
+        SagaReplyV1::Refused(refusal) => Err(WorkerFailure::Refused(format!("{refusal:?}"))),
+        _ => Err(WorkerFailure::InvalidReply),
     }
 }

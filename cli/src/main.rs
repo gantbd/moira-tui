@@ -99,6 +99,18 @@ fn run_headless(
     };
     match reply {
         SagaReplyV1::Accepted(SagaOutcomeV1::Page(page)) => {
+            let census = match client.census() {
+                Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Census(census))) => census,
+                Ok(SagaReplyV1::Refused(refusal)) => {
+                    return headless_failure("refused", &format!("Moira refused: {refusal:?}"));
+                }
+                Ok(SagaReplyV1::Accepted(_)) => {
+                    return headless_failure("invalid_reply", "unexpected Moira census reply");
+                }
+                Err(error) => {
+                    return headless_failure(classify(error), "Moira census failed");
+                }
+            };
             let manifest = moira_tui::CAPABILITIES;
             let sagas = page
                 .entries
@@ -126,6 +138,15 @@ fn run_headless(
                     "status": "current",
                     "sagas": sagas,
                     "truncated": page.next_after.is_some(),
+                    "census": {
+                        "total": census.total,
+                        "runnable_effects": census.runnable_effects,
+                        "awaiting_decision": census.awaiting_decision,
+                        "fenced": census.fenced,
+                        "terminal": census.terminal,
+                        "retries_consumed": census.retries_consumed,
+                        "saturated": census.saturated,
+                    },
                 }))?
             );
             Ok(())

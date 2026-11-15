@@ -12,5 +12,6 @@ fn headless_cli_uses_public_read_only_client_without_tui_state() {
     let source = include_str!("../cli/src/main.rs");
     let headless = source.split("fn run_headless").nth(1).unwrap();
     assert!(headless.contains("SagaReadOnlyClient"));
+    assert!(headless.contains("client.census()"));
     assert!(!headless.contains("Component::new"));
 }

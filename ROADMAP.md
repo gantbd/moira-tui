@@ -22,11 +22,25 @@ and Workbench are separate composition roots.
    and route the same public client into Workbench headless aggregation. The
    real-daemon attach gate covers aggregate headless observation; a synthetic
    public-port gate covers host rendering without importing Moira internals.
-3. Add census, evidence, and operator-receipt views as read-only projections.
+3. Census is now qualified in the reusable component and standalone headless
+   path. Selected-saga evidence and operator-receipt views remain read-only
+   projection work.
 4. Add reconciliation actions only after Moira supplies an exact confirmation,
    current-revision, command-scoped authorization, durable receipt, and
    outcome-unknown recovery contract suitable for an operator UI.
 5. Pin a clean Moira source receipt once its active service/client work lands.
+
+## Agent-provider participation
+
+The terminal peer will not launch or speak directly to Codex, Claude, Gemini,
+or another provider. Moira owns their workflow participation and reaches them
+through Daimon's planned provider-neutral agent-session/ACP profile. This peer
+will add provider-session, typed update, cancellation, and exact permission
+confirmation views only after those commands and projections exist in Moira's
+public client contract.
+
+See `../moira/docs/agent-provider-interaction.md` for the cross-component
+ownership and delivery plan.
 
 Workbench may host or attach Moira, but workflow state, revisions, effect
 identities, fences, authority, and reconciliation receipts remain Moira-owned.
