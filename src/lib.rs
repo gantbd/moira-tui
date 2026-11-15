@@ -6,8 +6,8 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use moira_client::{SagaReadOnlyClient, SagaServicePort};
 use moira_protocol::{
-    SagaCensusV1, SagaIdV1, SagaOutcomeV1, SagaPageV1, SagaReconciliationViewV1, SagaReplyV1,
-    SagaViewV1,
+    EffectEvidenceV1, OperatorReceiptSummaryV1, SagaCensusV1, SagaIdV1, SagaOutcomeV1, SagaPageV1,
+    SagaReconciliationViewV1, SagaReplyV1, SagaViewV1,
 };
 use ratatui::{
     Frame,
@@ -29,7 +29,12 @@ pub struct CapabilityManifest {
 pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
     schema: 1,
     peer: "moira",
-    interactive: &["sagas.inspect.v1", "sagas.reconciliation.v1"],
+    interactive: &[
+        "sagas.inspect.v1",
+        "sagas.reconciliation.v1",
+        "sagas.evidence.v1",
+        "sagas.operator-receipts.v1",
+    ],
     headless: &["sagas.inspect.v1"],
 };
 
@@ -67,7 +72,7 @@ pub fn translate_key(key: KeyEvent) -> Option<Input> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Request {
     Inspect,
-    Reconciliation(SagaIdV1),
+    Detail(SagaIdV1),
 }
 
 struct WorkerReply {
@@ -86,7 +91,15 @@ enum WorkerObservation {
         page: SagaPageV1,
         census: SagaCensusV1,
     },
-    Reconciliation(Option<SagaReconciliationViewV1>),
+    Detail(DetailObservation),
+}
+
+struct DetailObservation {
+    reconciliation: Option<SagaReconciliationViewV1>,
+    evidence: Vec<EffectEvidenceV1>,
+    evidence_truncated: bool,
+    receipts: Vec<OperatorReceiptSummaryV1>,
+    receipts_truncated: bool,
 }
 
 pub struct Component {
@@ -96,7 +109,7 @@ pub struct Component {
     sagas: Vec<SagaViewV1>,
     selected: usize,
     census: Option<SagaCensusV1>,
-    detail: Option<SagaReconciliationViewV1>,
+    detail: Option<DetailObservation>,
     truncated: bool,
     notice: String,
 }
@@ -114,7 +127,7 @@ impl Component {
             while let Ok(request) = request_rx.recv() {
                 let reply = match request {
                     Request::Inspect => inspect(&mut client),
-                    Request::Reconciliation(saga) => reconciliation(&mut client, saga),
+                    Request::Detail(saga) => detail(&mut client, saga),
                 };
                 if reply_tx.send(WorkerReply { request, reply }).is_err() {
                     break;
@@ -159,13 +172,15 @@ impl Component {
             Input::Refresh => {
                 let request = self
                     .detail
-                    .map(|detail| Request::Reconciliation(detail.saga.saga))
+                    .as_ref()
+                    .and_then(|detail| detail.reconciliation)
+                    .map(|detail| Request::Detail(detail.saga.saga))
                     .unwrap_or(Request::Inspect);
                 self.offer(request);
             }
             Input::Open if self.detail.is_none() => {
                 if let Some(saga) = self.sagas.get(self.selected) {
-                    self.offer(Request::Reconciliation(saga.saga));
+                    self.offer(Request::Detail(saga.saga));
                 }
             }
             Input::Back => self.detail = None,
@@ -184,21 +199,59 @@ impl Component {
         } else {
             " Moira "
         };
-        if let Some(detail) = self.detail {
-            let lines = vec![
-                Line::from(format!("saga: {:?}", detail.saga.saga)),
-                Line::from(format!("phase: {:?}", detail.saga.phase)),
+        if let Some(detail) = &self.detail {
+            let Some(reconciliation) = detail.reconciliation else {
+                frame.render_widget(
+                    Paragraph::new("Saga no longer available")
+                        .block(Block::default().title(title).borders(Borders::ALL)),
+                    body,
+                );
+                frame.render_widget(Paragraph::new(self.notice.as_str()), footer);
+                return;
+            };
+            let mut lines = vec![
+                Line::from(format!("saga: {:?}", reconciliation.saga.saga)),
+                Line::from(format!("phase: {:?}", reconciliation.saga.phase)),
                 Line::from(format!(
                     "automatic progress: {:?}",
-                    detail.automatic_progress
+                    reconciliation.automatic_progress
                 )),
                 Line::from(format!(
                     "confirmed revision: {}",
-                    detail.last_confirmed_revision
+                    reconciliation.last_confirmed_revision
                 )),
-                Line::from(format!("retained evidence: {}", detail.retained_evidence)),
-                Line::from(format!("fence: {:?}", detail.fence)),
+                Line::from(format!(
+                    "retained evidence: {}",
+                    reconciliation.retained_evidence
+                )),
+                Line::from(format!("fence: {:?}", reconciliation.fence)),
+                Line::from(format!(
+                    "evidence page: {}{}",
+                    detail.evidence.len(),
+                    if detail.evidence_truncated { "+" } else { "" }
+                )),
             ];
+            for evidence in &detail.evidence {
+                lines.push(Line::from(format!(
+                    "effect {:?}: {:?} at {}",
+                    evidence.effect, evidence.outcome, evidence.observed_at
+                )));
+            }
+            lines.push(Line::from(format!(
+                "operator receipts: {}{}",
+                detail.receipts.len(),
+                if detail.receipts_truncated { "+" } else { "" }
+            )));
+            for receipt in &detail.receipts {
+                lines.push(Line::from(format!(
+                    "action {:?}: {:?} authority {}/{} phase {:?}",
+                    receipt.action,
+                    receipt.disposition,
+                    receipt.authority_decision,
+                    receipt.authority_epoch,
+                    receipt.phase
+                )));
+            }
             frame.render_widget(
                 Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
                 body,
@@ -262,11 +315,11 @@ impl Component {
                     format!("{} saga(s)", self.sagas.len())
                 };
             }
-            Ok(WorkerObservation::Reconciliation(Some(detail))) => {
+            Ok(WorkerObservation::Detail(detail)) if detail.reconciliation.is_some() => {
                 self.detail = Some(detail);
-                self.notice = "Current reconciliation view".into();
+                self.notice = "Current evidence and reconciliation view".into();
             }
-            Ok(WorkerObservation::Reconciliation(None)) => {
+            Ok(WorkerObservation::Detail(_)) => {
                 self.notice = "Saga no longer available".into();
             }
             Err(WorkerFailure::Refused(refusal)) => {
@@ -315,18 +368,58 @@ fn inspect<P: SagaServicePort>(
     Ok(WorkerObservation::Inspect { page, census })
 }
 
-fn reconciliation<P: SagaServicePort>(
+fn detail<P: SagaServicePort>(
     client: &mut SagaReadOnlyClient<P>,
     saga: SagaIdV1,
 ) -> Result<WorkerObservation, WorkerFailure> {
-    match client
+    let reconciliation = match client
         .reconciliation(saga)
         .map_err(|_| WorkerFailure::Transport)?
     {
-        SagaReplyV1::Accepted(SagaOutcomeV1::Reconciliation(detail)) => {
-            Ok(WorkerObservation::Reconciliation(detail))
+        SagaReplyV1::Accepted(SagaOutcomeV1::Reconciliation(detail)) => detail,
+        SagaReplyV1::Refused(refusal) => {
+            return Err(WorkerFailure::Refused(format!("{refusal:?}")));
         }
-        SagaReplyV1::Refused(refusal) => Err(WorkerFailure::Refused(format!("{refusal:?}"))),
-        _ => Err(WorkerFailure::InvalidReply),
+        _ => return Err(WorkerFailure::InvalidReply),
+    };
+    if reconciliation.is_none() {
+        return Ok(WorkerObservation::Detail(DetailObservation {
+            reconciliation,
+            evidence: Vec::new(),
+            evidence_truncated: false,
+            receipts: Vec::new(),
+            receipts_truncated: false,
+        }));
     }
+    let evidence = match client
+        .evidence(saga, None, PAGE_LIMIT)
+        .map_err(|_| WorkerFailure::Transport)?
+    {
+        SagaReplyV1::Accepted(SagaOutcomeV1::Evidence(page)) => page,
+        SagaReplyV1::Refused(refusal) => {
+            return Err(WorkerFailure::Refused(format!("{refusal:?}")));
+        }
+        _ => return Err(WorkerFailure::InvalidReply),
+    };
+    let receipts = match client
+        .operator_receipts(None, PAGE_LIMIT)
+        .map_err(|_| WorkerFailure::Transport)?
+    {
+        SagaReplyV1::Accepted(SagaOutcomeV1::OperatorReceipts(page)) => page,
+        SagaReplyV1::Refused(refusal) => {
+            return Err(WorkerFailure::Refused(format!("{refusal:?}")));
+        }
+        _ => return Err(WorkerFailure::InvalidReply),
+    };
+    Ok(WorkerObservation::Detail(DetailObservation {
+        reconciliation,
+        evidence: evidence.entries,
+        evidence_truncated: evidence.next_after.is_some(),
+        receipts: receipts
+            .entries
+            .into_iter()
+            .filter(|receipt| receipt.saga == saga)
+            .collect(),
+        receipts_truncated: receipts.next_after.is_some(),
+    }))
 }

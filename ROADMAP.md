@@ -22,9 +22,9 @@ and Workbench are separate composition roots.
    and route the same public client into Workbench headless aggregation. The
    real-daemon attach gate covers aggregate headless observation; a synthetic
    public-port gate covers host rendering without importing Moira internals.
-3. Census is now qualified in the reusable component and standalone headless
-   path. Selected-saga evidence and operator-receipt views remain read-only
-   projection work.
+3. Census and selected-saga evidence/operator-receipt views are qualified
+   against the real daemon through the reusable component in standalone and
+   Workbench paths. The interactive detail remains bounded and read-only.
 4. Add reconciliation actions only after Moira supplies an exact confirmation,
    current-revision, command-scoped authorization, durable receipt, and
    outcome-unknown recovery contract suitable for an operator UI.

@@ -5,7 +5,11 @@ use std::{convert::Infallible, os::unix::net::UnixStream, path::PathBuf, time::D
 
 use moira_core::saga::{SagaLimitsV1, persistence::SagaCodecLimitsV1};
 use moira_local_daemon::unix::{SagaAuthenticator, SagaDaemon};
-use moira_protocol::{OperatorOperationV1, SagaCommandV1, SagaMutationV1, SagaSourceV1};
+use moira_protocol::{
+    OperatorActionIdV1, OperatorDispositionV1, OperatorOperationV1, SagaCommandV1,
+    SagaEffectOutcomeV1, SagaMutationV1, SagaOutcomeV1, SagaReplyV1, SagaSourceV1,
+    SagaTransitionV1,
+};
 use moira_service::{
     AccessV1,
     saga::{OperatorAccessV1, SagaService},
@@ -66,6 +70,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     })?;
     eprintln!("seeded {seeded:?}");
+    let SagaReplyV1::Accepted(SagaOutcomeV1::Applied {
+        transition: SagaTransitionV1::Admitted { saga, effect, .. },
+        ..
+    }) = seeded
+    else {
+        return Err("admission seed returned an unexpected reply".into());
+    };
+    let evidence = service.execute(SagaCommandV1::Apply {
+        expected_revision: 1,
+        mutation: SagaMutationV1::AcceptEffect {
+            saga,
+            effect,
+            outcome: SagaEffectOutcomeV1::Uncertain,
+            observed_at: 11,
+        },
+    })?;
+    let SagaReplyV1::Accepted(SagaOutcomeV1::Applied { .. }) = evidence else {
+        return Err("evidence seed returned an unexpected reply".into());
+    };
+    let reconciled = service.execute_operator_authorized(
+        OperatorAccessV1 {
+            subject: [3; 16],
+            authority_decision: 9,
+            authority_epoch: 10,
+        },
+        SagaCommandV1::Reconcile {
+            expected_revision: 2,
+            operation: OperatorOperationV1 {
+                action: OperatorActionIdV1([4; 16]),
+                saga,
+                disposition: OperatorDispositionV1::KeepUncertain,
+            },
+        },
+    )?;
+    eprintln!("reconciled {reconciled:?}");
     let mut daemon = SagaDaemon::bind_new(
         socket,
         service,

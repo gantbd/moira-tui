@@ -5,6 +5,9 @@ fn reusable_component_has_no_cli_or_terminal_owner() {
     assert!(!source.contains("ratatui::run"));
     assert!(!source.contains("process::exit"));
     assert!(!source.contains("SagaCommandV1::Reconcile"));
+    assert!(!source.contains("SagaOperatorClient"));
+    assert!(source.contains(".evidence("));
+    assert!(source.contains(".operator_receipts("));
 }
 
 #[test]
