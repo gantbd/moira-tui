@@ -20,6 +20,8 @@ mod reattach_view;
 #[cfg(unix)]
 mod reconciliation_confirm;
 #[cfg(unix)]
+mod reconciliation_recover;
+#[cfg(unix)]
 mod reconciliation_view;
 
 #[cfg(unix)]
@@ -49,6 +51,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }))?
         );
         return Ok(());
+    }
+    if mode == "reconciliation-recover" {
+        let socket = args.next().map(PathBuf::from).ok_or_else(usage)?;
+        let saga = moira_protocol::SagaIdV1(
+            args.next()
+                .ok_or_else(usage)?
+                .to_string_lossy()
+                .parse::<u64>()?,
+        );
+        let action = args
+            .next()
+            .and_then(|value| parse_bytes(&value))
+            .map(moira_protocol::OperatorActionIdV1)
+            .ok_or_else(usage)?;
+        if args.next().is_some() {
+            return Err(usage().into());
+        }
+        let port = moira_client::unix::SagaUnixPort::connect(
+            socket,
+            moira_client::unix::SagaClientLimitsV1::default(),
+        )
+        .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        return reconciliation_recover::run(port, saga, action);
     }
     if mode == "reconciliation-view"
         || mode == "reconciliation-confirm"
@@ -1087,7 +1112,7 @@ fn headless_failure(status: &str, message: &str) -> Result<(), Box<dyn std::erro
 }
 
 fn usage() -> &'static str {
-    "usage: moira-tui capabilities | moira-tui <interactive|headless> SOCKET | moira-tui reconciliation-view SOCKET SAGA_ID DISPOSITION [ARGS] | moira-tui reconciliation-interactive SOCKET SAGA_ID DISPOSITION [ARGS] | moira-tui reconciliation-confirm SOCKET STORAGE_REVISION SAGA_ID DISPOSITION [ARGS] ACTION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui deliberation-inspect SOCKET DELIBERATION_HEX | moira-tui deliberation-interactive SOCKET DELIBERATION_HEX | moira-tui agent-inspect SOCKET SESSION_HEX | moira-tui agent-events SOCKET SESSION_HEX [AFTER|-] | moira-tui agent-interactive SOCKET SESSION_HEX | moira-tui participation-inspect SOCKET PARTICIPATION_HEX | moira-tui participation-interactive SOCKET PARTICIPATION_HEX | moira-tui prompt-submit PARTICIPATION_SOCKET PARTICIPATION_HEX PROMPT_FILE|- CONFIRM | moira-tui prompt-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX PROMPT_FILE | moira-tui permission-view PARTICIPATION_SOCKET AGENT_SOCKET PARTICIPATION_HEX | moira-tui permission-interactive PARTICIPATION_SOCKET AGENT_SOCKET PARTICIPATION_HEX | moira-tui permission-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX OPTION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui cancel-view PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui cancel-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui cancel-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui reattach-view PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui reattach-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui reattach-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX CONFIRMATION_DIGEST_HEX CONFIRM\nreconciliation dispositions: keep-uncertain | fail-terminal | retry EFFECT_ID NOW | compensate NOW | cancel NOW | admit-evidence EFFECT_ID <succeeded|failed> OBSERVED_AT\nagent and deliberation commands use Moira's bounded public services; they never connect directly to a provider or carry authority credentials"
+    "usage: moira-tui capabilities | moira-tui <interactive|headless> SOCKET | moira-tui reconciliation-recover SOCKET SAGA_ID ACTION_HEX | moira-tui reconciliation-view SOCKET SAGA_ID DISPOSITION [ARGS] | moira-tui reconciliation-interactive SOCKET SAGA_ID DISPOSITION [ARGS] | moira-tui reconciliation-confirm SOCKET STORAGE_REVISION SAGA_ID DISPOSITION [ARGS] ACTION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui deliberation-inspect SOCKET DELIBERATION_HEX | moira-tui deliberation-interactive SOCKET DELIBERATION_HEX | moira-tui agent-inspect SOCKET SESSION_HEX | moira-tui agent-events SOCKET SESSION_HEX [AFTER|-] | moira-tui agent-interactive SOCKET SESSION_HEX | moira-tui participation-inspect SOCKET PARTICIPATION_HEX | moira-tui participation-interactive SOCKET PARTICIPATION_HEX | moira-tui prompt-submit PARTICIPATION_SOCKET PARTICIPATION_HEX PROMPT_FILE|- CONFIRM | moira-tui prompt-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX PROMPT_FILE | moira-tui permission-view PARTICIPATION_SOCKET AGENT_SOCKET PARTICIPATION_HEX | moira-tui permission-interactive PARTICIPATION_SOCKET AGENT_SOCKET PARTICIPATION_HEX | moira-tui permission-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX OPTION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui cancel-view PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui cancel-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui cancel-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui reattach-view PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui reattach-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui reattach-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX CONFIRMATION_DIGEST_HEX CONFIRM\nreconciliation dispositions: keep-uncertain | fail-terminal | retry EFFECT_ID NOW | compensate NOW | cancel NOW | admit-evidence EFFECT_ID <succeeded|failed> OBSERVED_AT\nagent and deliberation commands use Moira's bounded public services; they never connect directly to a provider or carry authority credentials"
 }
 
 #[cfg(not(unix))]

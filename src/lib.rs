@@ -71,6 +71,7 @@ pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
         "sagas.inspect.v1",
         "sagas.reconciliation.confirmation.v1",
         "sagas.reconciliation.confirm.v1",
+        "sagas.reconciliation.recovery.v1",
         "agent.session.inspect.v1",
         "agent.events.observe.v1",
         "agent.participation.inspect.v1",

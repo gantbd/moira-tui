@@ -517,6 +517,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "moira-reconciliation-command"
+version = "0.1.0"
+dependencies = [
+ "moira-client",
+ "moira-protocol",
+]
+
+[[package]]
 name = "moira-service"
 version = "0.1.0"
 dependencies = [
@@ -557,6 +565,7 @@ dependencies = [
  "moira-host",
  "moira-local-daemon",
  "moira-protocol",
+ "moira-reconciliation-command",
  "moira-service",
  "moira-sqlite",
  "moira-tui",

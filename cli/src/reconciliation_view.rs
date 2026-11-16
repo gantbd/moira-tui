@@ -2,22 +2,19 @@
 
 use std::{error::Error, io};
 
-use moira_client::{
-    SagaReadOnlyClient,
-    unix::{SagaClientErrorV1 as ClientError, SagaUnixPort},
-};
-use moira_protocol::{ReconciliationProposalV1, SagaOutcomeV1, SagaReplyV1};
+use moira_client::unix::{SagaClientErrorV1 as ClientError, SagaUnixPort};
+use moira_protocol::ReconciliationProposalV1;
+use moira_reconciliation_command::{PREPARE_CAPABILITY, PrepareError, prepare};
 use serde_json::json;
 
 pub fn run(port: SagaUnixPort, proposal: ReconciliationProposalV1) -> Result<(), Box<dyn Error>> {
-    let mut client = SagaReadOnlyClient::new(port);
-    match client.reconciliation_confirmation(proposal) {
-        Ok(SagaReplyV1::Accepted(SagaOutcomeV1::ReconciliationConfirmation(Some(value)))) => {
+    match prepare(port, proposal) {
+        Ok(value) => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "version": 1,
-                    "capability": "sagas.reconciliation.confirmation.v1",
+                    "capability": PREPARE_CAPABILITY,
                     "status": "current",
                     "storage_revision": value.storage_revision,
                     "saga": value.saga.0,
@@ -28,30 +25,34 @@ pub fn run(port: SagaUnixPort, proposal: ReconciliationProposalV1) -> Result<(),
             );
             Ok(())
         }
-        Ok(SagaReplyV1::Accepted(SagaOutcomeV1::ReconciliationConfirmation(None))) => {
+        Err(PrepareError::NotAvailable) => {
             fail("not_available", "no current reconciliation challenge")
         }
-        Ok(SagaReplyV1::Refused(refusal)) => {
+        Err(PrepareError::Refused(refusal)) => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "version": 1,
-                    "capability": "sagas.reconciliation.confirmation.v1",
+                    "capability": PREPARE_CAPABILITY,
                     "status": "refused",
                     "refusal": format!("{refusal:?}"),
                 }))?
             );
             Err(io::Error::other("reconciliation confirmation refused").into())
         }
-        Ok(_) => fail(
+        Err(PrepareError::InvalidReply) => fail(
             "invalid_reply",
             "unexpected reconciliation confirmation reply",
         ),
-        Err(ClientError::NotSent(kind)) => Err(io::Error::new(kind, "not sent").into()),
-        Err(ClientError::OutcomeUnknown(kind)) => {
+        Err(PrepareError::Transport(ClientError::NotSent(kind))) => {
+            Err(io::Error::new(kind, "not sent").into())
+        }
+        Err(PrepareError::Transport(ClientError::OutcomeUnknown(kind))) => {
             Err(io::Error::new(kind, "read outcome unknown").into())
         }
-        Err(_) => fail("invalid_reply", "invalid reconciliation confirmation reply"),
+        Err(PrepareError::Transport(_)) => {
+            fail("invalid_reply", "invalid reconciliation confirmation reply")
+        }
     }
 }
 
@@ -64,7 +65,7 @@ fn fail(status: &str, message: &str) -> Result<(), Box<dyn Error>> {
         "{}",
         serde_json::to_string_pretty(&json!({
             "version": 1,
-            "capability": "sagas.reconciliation.confirmation.v1",
+            "capability": PREPARE_CAPABILITY,
             "status": status,
         }))?
     );

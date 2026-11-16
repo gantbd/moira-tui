@@ -17,6 +17,7 @@ moira-tui = { path = ".." }
 moira-tui-local-client = { path = "../local-client" }
 moira-client = { version = "=0.1.0", path = "../../moira/crates/moira-client", features = ["unix"] }
 moira-protocol = { version = "=0.1.0", path = "../../moira/crates/moira-protocol" }
+moira-reconciliation-command = { version = "=0.1.0", path = "../../moira/crates/moira-reconciliation-command" }
 ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
 crossterm = "=0.29.0"
 serde_json = "=1.0.151"

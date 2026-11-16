@@ -2,11 +2,9 @@
 
 use std::{error::Error, io};
 
-use moira_client::{
-    SagaConfirmedReconciliationClient,
-    unix::{SagaClientErrorV1 as ClientError, SagaUnixPort},
-};
-use moira_protocol::{ConfirmedReconciliationV1, SagaOutcomeV1, SagaReplyV1};
+use moira_client::unix::{SagaClientErrorV1 as ClientError, SagaUnixPort};
+use moira_protocol::{ConfirmedReconciliationV1, SagaOutcomeV1};
+use moira_reconciliation_command::{CONFIRM_CAPABILITY, ConfirmError, confirm};
 use serde_json::json;
 
 pub fn run(
@@ -14,18 +12,17 @@ pub fn run(
     confirmation: ConfirmedReconciliationV1,
 ) -> Result<(), Box<dyn Error>> {
     let action = hex(&confirmation.action.0);
-    let mut client = SagaConfirmedReconciliationClient::new(port);
-    match client.confirm(confirmation) {
-        Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Applied {
+    match confirm(port, confirmation) {
+        Ok(SagaOutcomeV1::Applied {
             storage_revision,
             transition,
             replayed,
-        })) => {
+        }) => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "version": 1,
-                    "capability": "sagas.reconciliation.confirm.v1",
+                    "capability": CONFIRM_CAPABILITY,
                     "status": "accepted",
                     "storage_revision": storage_revision,
                     "transition": format!("{transition:?}"),
@@ -35,12 +32,12 @@ pub fn run(
             );
             Ok(())
         }
-        Ok(SagaReplyV1::Refused(refusal)) => {
+        Err(ConfirmError::Refused(refusal)) => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "version": 1,
-                    "capability": "sagas.reconciliation.confirm.v1",
+                    "capability": CONFIRM_CAPABILITY,
                     "status": "refused",
                     "refusal": format!("{refusal:?}"),
                     "action": action,
@@ -48,15 +45,21 @@ pub fn run(
             );
             Err(io::Error::other("reconciliation refused").into())
         }
-        Ok(_) => fail("invalid_reply", &action, "unexpected reconciliation reply"),
-        Err(ClientError::NotSent(kind)) => transport("not_sent", kind, true, &action),
-        Err(ClientError::OutcomeUnknown(kind)) => {
+        Ok(_) | Err(ConfirmError::InvalidReply) => {
+            fail("invalid_reply", &action, "unexpected reconciliation reply")
+        }
+        Err(ConfirmError::Transport(ClientError::NotSent(kind))) => {
+            transport("not_sent", kind, true, &action)
+        }
+        Err(ConfirmError::Transport(ClientError::OutcomeUnknown(kind))) => {
             transport("outcome_unknown", kind, false, &action)
         }
-        Err(ClientError::RequestLimit) => fail("request_limit", &action, "request limit reached"),
-        Err(ClientError::InvalidLimits | ClientError::InvalidReady | ClientError::InvalidReply) => {
-            fail("invalid_reply", &action, "invalid reconciliation reply")
+        Err(ConfirmError::Transport(ClientError::RequestLimit)) => {
+            fail("request_limit", &action, "request limit reached")
         }
+        Err(ConfirmError::Transport(
+            ClientError::InvalidLimits | ClientError::InvalidReady | ClientError::InvalidReply,
+        )) => fail("invalid_reply", &action, "invalid reconciliation reply"),
     }
 }
 
@@ -70,7 +73,7 @@ fn transport(
         "{}",
         serde_json::to_string_pretty(&json!({
             "version": 1,
-            "capability": "sagas.reconciliation.confirm.v1",
+            "capability": CONFIRM_CAPABILITY,
             "status": status,
             "retry_safe": retry_safe,
             "action": action,
@@ -85,7 +88,7 @@ fn fail(status: &str, action: &str, message: &str) -> Result<(), Box<dyn Error>>
         "{}",
         serde_json::to_string_pretty(&json!({
             "version": 1,
-            "capability": "sagas.reconciliation.confirm.v1",
+            "capability": CONFIRM_CAPABILITY,
             "status": status,
             "action": action,
         }))?

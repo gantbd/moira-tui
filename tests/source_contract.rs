@@ -114,12 +114,19 @@ fn permission_confirmation_mutation_carries_no_authority_or_execution_material()
 fn saga_reconciliation_uses_only_the_server_prepared_confirmation() {
     let view = include_str!("../cli/src/reconciliation_view.rs");
     let confirm = include_str!("../cli/src/reconciliation_confirm.rs");
-    assert!(view.contains("SagaReadOnlyClient"));
-    assert!(view.contains("reconciliation_confirmation"));
-    assert!(confirm.contains("SagaConfirmedReconciliationClient"));
+    let recover = include_str!("../cli/src/reconciliation_recover.rs");
+    let guard = include_str!("../../moira/crates/moira-reconciliation-command/src/lib.rs");
+    assert!(view.contains("moira_reconciliation_command"));
+    assert!(view.contains("prepare"));
+    assert!(confirm.contains("moira_reconciliation_command"));
+    assert!(confirm.contains("confirm"));
     assert!(confirm.contains("ConfirmedReconciliationV1"));
-    assert!(confirm.contains("operator receipt"));
-    for source in [view, confirm] {
+    assert!(recover.contains("recover"));
+    assert!(guard.contains("SagaReadOnlyClient"));
+    assert!(guard.contains("reconciliation_confirmation"));
+    assert!(guard.contains("SagaConfirmedReconciliationClient"));
+    assert!(guard.contains("operator_receipt"));
+    for source in [view, confirm, recover, guard] {
         assert!(!source.contains("SagaOperatorClient"));
         assert!(!source.contains("OperatorOperationV1"));
         assert!(!source.contains("OperatorAccessV1"));
