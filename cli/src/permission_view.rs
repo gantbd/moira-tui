@@ -6,6 +6,7 @@ use moira_client::{AgentParticipationReadOnlyClient, AgentReadOnlyClient};
 use moira_protocol::{agent, agent_participation as participation};
 use moira_tui_local_client::{LocalAgentParticipationPort, LocalAgentPort};
 use serde_json::{Value, json};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 
 const PAGE_LIMIT: u64 = 64;
@@ -193,64 +194,12 @@ fn validated_request(
     session: &agent::SessionViewV1,
     records: &[agent::EventRecordV1],
 ) -> Option<agent::PermissionRequestV1> {
-    let evidence = participation.permission?;
-    if session.session.0 != participation.binding.session.0
-        || session.phase != agent::PhaseV1::AwaitingPermission
-        || Some(session.revision) != participation.session_revision
-        || session.active_turn.map(|value| value.0) != Some(evidence.turn.0)
-        || session.last_event_cursor != participation.last_event_cursor
-        || records.last().map(|record| record.cursor) != session.last_event_cursor
-        || Some(session.profile_document_digest.0) != participation.profile_document_digest
-        || participation.active_turn != Some(evidence.turn)
-    {
-        return None;
-    }
-    let mut matches = records.iter().filter_map(|record| match &record.event {
-        agent::EventV1::Permission(value)
-            if value.request.0 == evidence.request.0 && value.turn.0 == evidence.turn.0 =>
-        {
-            Some(value)
-        }
-        _ => None,
-    });
-    let request = matches.next()?;
-    let count = usize::from(evidence.option_count);
-    if matches.next().is_some()
-        || count == 0
-        || count > participation::MAX_PERMISSION_OPTIONS_V1
-        || request.options.len() != count
-        || <[u8; 32]>::from(Sha256::digest(&request.capability)) != evidence.capability_digest
-        || options_digest(&request.options) != evidence.options_digest
-        || request
-            .options
-            .iter()
-            .enumerate()
-            .any(|(index, option)| evidence.option_ids[index].0 != option.id.0)
-        || evidence.option_ids[request.options.len()..]
-            .iter()
-            .any(|option| option.0 != [0; 16])
-    {
-        return None;
-    }
-    Some(request.clone())
+    moira_tui::validated_permission_request(participation, session, records)
 }
 
+#[cfg(test)]
 fn options_digest(values: &[agent::PermissionOptionV1]) -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(b"MOIRAOPT1");
-    hash.update((values.len() as u64).to_be_bytes());
-    for value in values {
-        hash.update(value.id.0);
-        hash.update([match value.kind {
-            agent::PermissionOptionKindV1::AllowOnce => 0,
-            agent::PermissionOptionKindV1::AllowAlways => 1,
-            agent::PermissionOptionKindV1::RejectOnce => 2,
-            agent::PermissionOptionKindV1::RejectAlways => 3,
-        }]);
-        hash.update((value.label.len() as u64).to_be_bytes());
-        hash.update(&value.label);
-    }
-    hash.finalize().into()
+    moira_tui::permission_options_digest(values)
 }
 
 const fn option_kind(value: agent::PermissionOptionKindV1) -> &'static str {

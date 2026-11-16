@@ -543,6 +543,7 @@ dependencies = [
  "moira-client",
  "moira-protocol",
  "ratatui",
+ "sha2",
 ]
 
 [[package]]

@@ -16,6 +16,7 @@ moira-client = { version = "=0.1.0", path = "../moira/crates/moira-client" }
 moira-protocol = { version = "=0.1.0", path = "../moira/crates/moira-protocol" }
 ratatui = { version = "=0.30.2", default-features = false }
 crossterm = "=0.29.0"
+sha2 = "=0.10.9"
 
 [lints.rust]
 unsafe_code = "forbid"

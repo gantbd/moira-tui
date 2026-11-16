@@ -59,6 +59,7 @@ fn operation_kind(value: participation::OperationV1) -> &'static str {
         participation::OperationV1::Advance { .. } => "advance",
         participation::OperationV1::Cancel { .. } => "cancel",
         participation::OperationV1::Close { .. } => "close",
+        participation::OperationV1::Reattach { .. } => "reattach",
     }
 }
 

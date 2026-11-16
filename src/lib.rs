@@ -1,5 +1,28 @@
-//! Composable, read-only Ratatui presentation over Moira's public saga client.
+//! Composable Ratatui presentation and closed governed controls over Moira's
+//! capability-shaped public clients.
 #![forbid(unsafe_code)]
+
+mod agent;
+mod cancel_control;
+mod deliberation;
+mod participation;
+mod permission_control;
+mod prompt_control;
+mod reattach_control;
+mod reconciliation_control;
+pub use agent::AgentComponent;
+pub use cancel_control::{CancelControlInput, CancellationControlComponent};
+pub use deliberation::{DeliberationComponent, DeliberationObservation, observe_deliberation};
+pub use participation::ParticipationComponent;
+pub use permission_control::{
+    PermissionControlComponent, PermissionControlInput, permission_options_digest,
+    validated_permission_request,
+};
+pub use prompt_control::{
+    MAX_INTERACTIVE_PROMPT_BYTES, PromptControlComponent, PromptControlError, PromptControlInput,
+};
+pub use reattach_control::{ReattachControlComponent, ReattachControlInput};
+pub use reconciliation_control::{ReconciliationControlComponent, ReconciliationControlInput};
 
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
@@ -34,13 +57,31 @@ pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
         "sagas.reconciliation.v1",
         "sagas.evidence.v1",
         "sagas.operator-receipts.v1",
+        "sagas.reconciliation.confirm.v1",
+        "sagas.reconciliation.recovery.v1",
+        "agent.participation.inspect.v1",
+        "agent.session.observe.v1",
+        "agent.cancel.confirm.v1",
+        "agent.reattach.confirm.v1",
+        "agent.permission.confirm.v1",
+        "agent.prompt.submit.v1",
+        "deliberation.inspect.v1",
     ],
     headless: &[
         "sagas.inspect.v1",
+        "sagas.reconciliation.confirmation.v1",
+        "sagas.reconciliation.confirm.v1",
         "agent.session.inspect.v1",
         "agent.events.observe.v1",
         "agent.participation.inspect.v1",
+        "agent.prompt.submit.v1",
         "agent.permission.confirmation-view.v1",
+        "agent.permission.confirm.v1",
+        "agent.cancel.confirmation-view.v1",
+        "agent.cancel.confirm.v1",
+        "agent.reattach.confirmation-view.v1",
+        "agent.reattach.confirm.v1",
+        "deliberation.inspect.v1",
     ],
 };
 

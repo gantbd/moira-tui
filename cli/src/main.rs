@@ -6,9 +6,21 @@ mod cancel_confirm;
 #[cfg(unix)]
 mod cancel_view;
 #[cfg(unix)]
+mod deliberation_view;
+#[cfg(unix)]
 mod permission_confirm;
 #[cfg(unix)]
 mod permission_view;
+#[cfg(unix)]
+mod prompt_submit;
+#[cfg(unix)]
+mod reattach_confirm;
+#[cfg(unix)]
+mod reattach_view;
+#[cfg(unix)]
+mod reconciliation_confirm;
+#[cfg(unix)]
+mod reconciliation_view;
 
 #[cfg(unix)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,7 +50,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    if mode == "agent-inspect" || mode == "agent-events" {
+    if mode == "reconciliation-view"
+        || mode == "reconciliation-confirm"
+        || mode == "reconciliation-interactive"
+    {
+        let socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
+        let storage_revision = if mode == "reconciliation-confirm" {
+            Some(
+                args.next()
+                    .ok_or_else(|| usage())?
+                    .to_string_lossy()
+                    .parse::<u64>()?,
+            )
+        } else {
+            None
+        };
+        let saga = moira_protocol::SagaIdV1(
+            args.next()
+                .ok_or_else(|| usage())?
+                .to_string_lossy()
+                .parse::<u64>()?,
+        );
+        let disposition = parse_reconciliation_disposition(&mut args)?;
+        let action = if mode == "reconciliation-confirm" {
+            Some(
+                args.next()
+                    .and_then(|value| parse_bytes(&value))
+                    .map(moira_protocol::OperatorActionIdV1)
+                    .ok_or_else(|| usage())?,
+            )
+        } else {
+            None
+        };
+        let digest = if mode == "reconciliation-confirm" {
+            Some(
+                args.next()
+                    .and_then(|value| parse_digest(&value))
+                    .ok_or_else(|| usage())?,
+            )
+        } else {
+            None
+        };
+        if mode == "reconciliation-confirm" {
+            if args.next().as_deref() != Some(std::ffi::OsStr::new("CONFIRM"))
+                || args.next().is_some()
+            {
+                return Err(usage().into());
+            }
+        } else if args.next().is_some() {
+            return Err(usage().into());
+        }
+        let port = moira_tui_local_client::LocalSagaPort::connect(
+            socket,
+            moira_tui_local_client::ClientLimits::default(),
+        )
+        .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        let proposal = moira_protocol::ReconciliationProposalV1 { saga, disposition };
+        if mode == "reconciliation-view" {
+            return reconciliation_view::run(port, proposal);
+        }
+        if mode == "reconciliation-interactive" {
+            return run_reconciliation_interactive(moira_tui::ReconciliationControlComponent::new(
+                port, proposal,
+            ));
+        }
+        return reconciliation_confirm::run(
+            port,
+            moira_protocol::ConfirmedReconciliationV1 {
+                storage_revision: storage_revision.expect("confirmation mode"),
+                saga,
+                disposition,
+                action: action.expect("confirmation mode"),
+                confirmation_digest: digest.expect("confirmation mode"),
+            },
+        );
+    }
+    if mode == "deliberation-inspect" || mode == "deliberation-interactive" {
+        let socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
+        let deliberation = args
+            .next()
+            .and_then(|value| parse_bytes(&value))
+            .map(moira_protocol::deliberation::DeliberationIdV1)
+            .ok_or_else(|| usage())?;
+        if args.next().is_some() {
+            return Err(usage().into());
+        }
+        let port = moira_tui_local_client::LocalDeliberationPort::connect(
+            socket,
+            moira_tui_local_client::ClientLimits::default(),
+        )
+        .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        if mode == "deliberation-interactive" {
+            return run_deliberation_interactive(moira_tui::DeliberationComponent::new(
+                port,
+                deliberation,
+            ));
+        }
+        return deliberation_view::run(port, deliberation);
+    }
+    if mode == "agent-inspect" || mode == "agent-events" || mode == "agent-interactive" {
         let socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
         let session = args
             .next()
@@ -61,9 +171,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             moira_tui_local_client::ClientLimits::default(),
         )
         .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        if mode == "agent-interactive" {
+            return run_agent_interactive(moira_tui::AgentComponent::new(port, session));
+        }
         return run_agent_headless(port, mode == "agent-events", session, after);
     }
-    if mode == "participation-inspect" {
+    if mode == "participation-inspect" || mode == "participation-interactive" {
         let socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
         let participation = args
             .next()
@@ -78,9 +191,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             moira_tui_local_client::ClientLimits::default(),
         )
         .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        if mode == "participation-interactive" {
+            return run_participation_interactive(moira_tui::ParticipationComponent::new(
+                port,
+                participation,
+            ));
+        }
         return run_participation_headless(port, participation);
     }
-    if mode == "permission-view" {
+    if mode == "prompt-submit" || mode == "prompt-interactive" {
+        let socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
+        let participation = args
+            .next()
+            .and_then(|value| parse_bytes(&value))
+            .map(moira_protocol::agent_participation::ParticipationIdV1)
+            .ok_or_else(|| usage())?;
+        let source = args.next().ok_or_else(|| usage())?;
+        if mode == "prompt-interactive" && source == std::ffi::OsStr::new("-") {
+            return Err(
+                "prompt-interactive requires a file so the terminal remains attached".into(),
+            );
+        }
+        if mode == "prompt-submit" {
+            if args.next().as_deref() != Some(std::ffi::OsStr::new("CONFIRM"))
+                || args.next().is_some()
+            {
+                return Err(usage().into());
+            }
+        } else if args.next().is_some() {
+            return Err(usage().into());
+        }
+        let prompt = prompt_submit::read_prompt(&source)?;
+        let port = moira_tui_local_client::LocalAgentParticipationPort::connect(
+            &socket,
+            moira_tui_local_client::ClientLimits::default(),
+        )
+        .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        if mode == "prompt-interactive" {
+            let component = moira_tui::PromptControlComponent::try_new(port, participation, prompt)
+                .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+            return run_prompt_interactive(component);
+        }
+        return prompt_submit::run(port, participation, prompt);
+    }
+    if mode == "permission-view" || mode == "permission-interactive" {
         let participation_socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
         let agent_socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
         let participation = args
@@ -92,7 +246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(usage().into());
         }
         let participation_port = moira_tui_local_client::LocalAgentParticipationPort::connect(
-            participation_socket,
+            &participation_socket,
             moira_tui_local_client::ClientLimits::default(),
         )
         .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
@@ -101,6 +255,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             moira_tui_local_client::ClientLimits::default(),
         )
         .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        if mode == "permission-interactive" {
+            return run_permission_interactive(moira_tui::PermissionControlComponent::new(
+                participation_port,
+                agent_port,
+                participation,
+            ));
+        }
         return permission_view::run(participation_port, agent_port, participation);
     }
     if mode == "permission-confirm" {
@@ -137,22 +298,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
     }
-    if mode == "cancel-view" || mode == "cancel-confirm" {
+    if mode == "cancel-view" || mode == "cancel-confirm" || mode == "cancel-interactive" {
         let socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
         let participation = args
             .next()
             .and_then(|value| parse_bytes(&value))
             .map(moira_protocol::agent_participation::ParticipationIdV1)
             .ok_or_else(|| usage())?;
-        if mode == "cancel-view" {
+        if mode == "cancel-view" || mode == "cancel-interactive" {
             if args.next().is_some() {
                 return Err(usage().into());
             }
             let port = moira_tui_local_client::LocalAgentParticipationPort::connect(
-                socket,
+                &socket,
                 moira_tui_local_client::ClientLimits::default(),
             )
             .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+            if mode == "cancel-interactive" {
+                return run_cancel_interactive(moira_tui::CancellationControlComponent::new(
+                    port,
+                    participation,
+                ));
+            }
             return cancel_view::run(port, participation);
         }
         let confirmation_digest = args
@@ -171,6 +338,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return cancel_confirm::run(
             port,
             moira_protocol::agent_participation::ConfirmedCancelV1 {
+                participation,
+                confirmation_digest,
+            },
+        );
+    }
+    if mode == "reattach-view" || mode == "reattach-confirm" || mode == "reattach-interactive" {
+        let socket = args.next().map(PathBuf::from).ok_or_else(|| usage())?;
+        let participation = args
+            .next()
+            .and_then(|value| parse_bytes(&value))
+            .map(moira_protocol::agent_participation::ParticipationIdV1)
+            .ok_or_else(|| usage())?;
+        if mode == "reattach-view" || mode == "reattach-interactive" {
+            if args.next().is_some() {
+                return Err(usage().into());
+            }
+            let port = moira_tui_local_client::LocalAgentParticipationPort::connect(
+                socket,
+                moira_tui_local_client::ClientLimits::default(),
+            )
+            .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+            if mode == "reattach-interactive" {
+                return run_reattach_interactive(moira_tui::ReattachControlComponent::new(
+                    port,
+                    participation,
+                ));
+            }
+            return reattach_view::run(port, participation);
+        }
+        let confirmation_digest = args
+            .next()
+            .and_then(|value| parse_digest(&value))
+            .ok_or_else(|| usage())?;
+        if args.next().as_deref() != Some(std::ffi::OsStr::new("CONFIRM")) || args.next().is_some()
+        {
+            return Err(usage().into());
+        }
+        let port = moira_tui_local_client::LocalAgentParticipationPort::connect(
+            socket,
+            moira_tui_local_client::ClientLimits::default(),
+        )
+        .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        return reattach_confirm::run(
+            port,
+            moira_protocol::agent_participation::ConfirmedReattachV1 {
                 participation,
                 confirmation_digest,
             },
@@ -223,6 +435,11 @@ fn run_agent_headless(
         ReplyV1::Accepted(OutcomeV1::Session(view)) => serde_json::json!({
             "version": 1, "capability": "agent.session.inspect.v1", "status": "current",
             "revision": view.revision, "phase": format!("{:?}", view.phase),
+            "recovery": if view.phase == moira_protocol::agent::PhaseV1::ReattachRequired {
+                Some("explicit_governed_reattach_required")
+            } else {
+                None
+            },
             "active_turn": view.active_turn.map(|value| format!("{value:?}")),
             "last_event_cursor": view.last_event_cursor,
             "capabilities": {
@@ -277,6 +494,13 @@ fn event_json(record: moira_protocol::agent::EventRecordV1) -> serde_json::Value
             content_digest,
         } => {
             serde_json::json!({"kind":"file_change","path":path,"content_digest":format!("{content_digest:?}")})
+        }
+        EventV1::FileRead {
+            path,
+            content_digest,
+            content_bytes,
+        } => {
+            serde_json::json!({"kind":"file_read","path":path,"content_digest":format!("{content_digest:?}"),"content_bytes":content_bytes})
         }
         EventV1::Usage {
             input_tokens,
@@ -372,6 +596,7 @@ fn operation_kind(value: moira_protocol::agent_participation::OperationV1) -> &'
         OperationV1::DecidePermission { .. } => "decide_permission",
         OperationV1::Cancel { .. } => "cancel",
         OperationV1::Close { .. } => "close",
+        OperationV1::Reattach { .. } => "reattach",
     }
 }
 
@@ -407,6 +632,56 @@ fn parse_digest(value: &std::ffi::OsStr) -> Option<[u8; 32]> {
 }
 
 #[cfg(unix)]
+fn parse_reconciliation_disposition<I>(
+    args: &mut I,
+) -> Result<moira_protocol::OperatorDispositionV1, Box<dyn std::error::Error>>
+where
+    I: Iterator<Item = std::ffi::OsString>,
+{
+    use moira_protocol::{OperatorDispositionV1, SagaEffectIdV1, SagaEffectOutcomeV1};
+    let kind = args.next().ok_or_else(|| usage())?;
+    let u64_arg = |args: &mut I| -> Result<u64, Box<dyn std::error::Error>> {
+        Ok(args
+            .next()
+            .ok_or_else(|| usage())?
+            .to_string_lossy()
+            .parse::<u64>()?)
+    };
+    Ok(match kind.to_str().ok_or_else(usage)? {
+        "keep-uncertain" => OperatorDispositionV1::KeepUncertain,
+        "fail-terminal" => OperatorDispositionV1::FailTerminal,
+        "retry" => OperatorDispositionV1::Retry {
+            failed_effect: SagaEffectIdV1(u64_arg(args)?),
+            now: u64_arg(args)?,
+        },
+        "compensate" => OperatorDispositionV1::Compensate {
+            now: u64_arg(args)?,
+        },
+        "cancel" => OperatorDispositionV1::Cancel {
+            now: u64_arg(args)?,
+        },
+        "admit-evidence" => {
+            let effect = SagaEffectIdV1(u64_arg(args)?);
+            let outcome = match args
+                .next()
+                .and_then(|value| value.into_string().ok())
+                .as_deref()
+            {
+                Some("succeeded") => SagaEffectOutcomeV1::Succeeded,
+                Some("failed") => SagaEffectOutcomeV1::Failed,
+                _ => return Err(usage().into()),
+            };
+            OperatorDispositionV1::AdmitEvidence {
+                effect,
+                outcome,
+                observed_at: u64_arg(args)?,
+            }
+        }
+        _ => return Err(usage().into()),
+    })
+}
+
+#[cfg(unix)]
 fn run_interactive(mut component: moira_tui::Component) -> Result<(), Box<dyn std::error::Error>> {
     use crossterm::event::{self, Event};
     use std::time::Duration;
@@ -429,6 +704,281 @@ fn run_interactive(mut component: moira_tui::Component) -> Result<(), Box<dyn st
                     }
                 }
                 _ => {}
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_participation_interactive(
+    mut component: moira_tui::ParticipationComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            match event::read()? {
+                Event::Resize(..) => {}
+                Event::Key(key) => {
+                    let Some(input) = moira_tui::translate_key(key) else {
+                        continue;
+                    };
+                    if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_agent_interactive(
+    mut component: moira_tui::AgentComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            match event::read()? {
+                Event::Resize(..) => {}
+                Event::Key(key) => {
+                    let Some(input) = moira_tui::translate_key(key) else {
+                        continue;
+                    };
+                    if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_deliberation_interactive(
+    mut component: moira_tui::DeliberationComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            match event::read()? {
+                Event::Resize(..) => {}
+                Event::Key(key) => {
+                    let Some(input) = moira_tui::translate_key(key) else {
+                        continue;
+                    };
+                    if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_cancel_interactive(
+    mut component: moira_tui::CancellationControlComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+                continue;
+            }
+            let input = match key.code {
+                KeyCode::Char('r') => moira_tui::CancelControlInput::Refresh,
+                KeyCode::Char('c') => moira_tui::CancelControlInput::Arm,
+                KeyCode::Enter => moira_tui::CancelControlInput::Confirm,
+                KeyCode::Esc | KeyCode::Backspace => moira_tui::CancelControlInput::Back,
+                KeyCode::Char('q') => moira_tui::CancelControlInput::Close,
+                _ => continue,
+            };
+            if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                break;
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_reattach_interactive(
+    mut component: moira_tui::ReattachControlComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+                continue;
+            }
+            let input = match key.code {
+                KeyCode::Char('r') => moira_tui::ReattachControlInput::Refresh,
+                KeyCode::Char('c') => moira_tui::ReattachControlInput::Arm,
+                KeyCode::Enter => moira_tui::ReattachControlInput::Confirm,
+                KeyCode::Esc | KeyCode::Backspace => moira_tui::ReattachControlInput::Back,
+                KeyCode::Char('q') => moira_tui::ReattachControlInput::Close,
+                _ => continue,
+            };
+            if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                break;
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_reconciliation_interactive(
+    mut component: moira_tui::ReconciliationControlComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+                continue;
+            }
+            let input = match key.code {
+                KeyCode::Char('r') => moira_tui::ReconciliationControlInput::Refresh,
+                KeyCode::Char('c') => moira_tui::ReconciliationControlInput::Arm,
+                KeyCode::Enter => moira_tui::ReconciliationControlInput::Confirm,
+                KeyCode::Esc | KeyCode::Backspace => moira_tui::ReconciliationControlInput::Back,
+                KeyCode::Char('q') => moira_tui::ReconciliationControlInput::Close,
+                _ => continue,
+            };
+            if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                break;
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_permission_interactive(
+    mut component: moira_tui::PermissionControlComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+                continue;
+            }
+            let input = match key.code {
+                KeyCode::Up | KeyCode::Char('k') => moira_tui::PermissionControlInput::Up,
+                KeyCode::Down | KeyCode::Char('j') => moira_tui::PermissionControlInput::Down,
+                KeyCode::Char('r') => moira_tui::PermissionControlInput::Refresh,
+                KeyCode::Char('c') => moira_tui::PermissionControlInput::Arm,
+                KeyCode::Enter => moira_tui::PermissionControlInput::Confirm,
+                KeyCode::Esc | KeyCode::Backspace => moira_tui::PermissionControlInput::Back,
+                KeyCode::Char('q') => moira_tui::PermissionControlInput::Close,
+                _ => continue,
+            };
+            if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                break;
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn run_prompt_interactive(
+    mut component: moira_tui::PromptControlComponent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use std::time::Duration;
+
+    ratatui::run(|terminal| -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            component.poll();
+            terminal.draw(|frame| component.draw_in(frame, frame.area(), true))?;
+            if !event::poll(Duration::from_millis(50))? {
+                continue;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+                continue;
+            }
+            let input = match key.code {
+                KeyCode::Char('r') => moira_tui::PromptControlInput::Refresh,
+                KeyCode::Char('c') => moira_tui::PromptControlInput::Arm,
+                KeyCode::Enter => moira_tui::PromptControlInput::Confirm,
+                KeyCode::Esc | KeyCode::Backspace => moira_tui::PromptControlInput::Back,
+                KeyCode::Char('q') => moira_tui::PromptControlInput::Close,
+                _ => continue,
+            };
+            if component.update(input, true) == moira_tui::Lifecycle::CloseRequested {
+                break;
             }
         }
         Ok(())
@@ -539,7 +1089,7 @@ fn headless_failure(status: &str, message: &str) -> Result<(), Box<dyn std::erro
 }
 
 fn usage() -> &'static str {
-    "usage: moira-tui capabilities | moira-tui <interactive|headless> SOCKET | moira-tui agent-inspect SOCKET SESSION_HEX | moira-tui agent-events SOCKET SESSION_HEX [AFTER|-] | moira-tui participation-inspect SOCKET PARTICIPATION_HEX | moira-tui permission-view PARTICIPATION_SOCKET AGENT_SOCKET PARTICIPATION_HEX | moira-tui permission-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX OPTION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui cancel-view PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui cancel-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX CONFIRMATION_DIGEST_HEX CONFIRM\nagent commands use Moira's bounded public services; they never connect directly to a provider or carry authority credentials"
+    "usage: moira-tui capabilities | moira-tui <interactive|headless> SOCKET | moira-tui reconciliation-view SOCKET SAGA_ID DISPOSITION [ARGS] | moira-tui reconciliation-interactive SOCKET SAGA_ID DISPOSITION [ARGS] | moira-tui reconciliation-confirm SOCKET STORAGE_REVISION SAGA_ID DISPOSITION [ARGS] ACTION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui deliberation-inspect SOCKET DELIBERATION_HEX | moira-tui deliberation-interactive SOCKET DELIBERATION_HEX | moira-tui agent-inspect SOCKET SESSION_HEX | moira-tui agent-events SOCKET SESSION_HEX [AFTER|-] | moira-tui agent-interactive SOCKET SESSION_HEX | moira-tui participation-inspect SOCKET PARTICIPATION_HEX | moira-tui participation-interactive SOCKET PARTICIPATION_HEX | moira-tui prompt-submit PARTICIPATION_SOCKET PARTICIPATION_HEX PROMPT_FILE|- CONFIRM | moira-tui prompt-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX PROMPT_FILE | moira-tui permission-view PARTICIPATION_SOCKET AGENT_SOCKET PARTICIPATION_HEX | moira-tui permission-interactive PARTICIPATION_SOCKET AGENT_SOCKET PARTICIPATION_HEX | moira-tui permission-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX OPTION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui cancel-view PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui cancel-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui cancel-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX CONFIRMATION_DIGEST_HEX CONFIRM | moira-tui reattach-view PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui reattach-interactive PARTICIPATION_SOCKET PARTICIPATION_HEX | moira-tui reattach-confirm PARTICIPATION_SOCKET PARTICIPATION_HEX CONFIRMATION_DIGEST_HEX CONFIRM\nreconciliation dispositions: keep-uncertain | fail-terminal | retry EFFECT_ID NOW | compensate NOW | cancel NOW | admit-evidence EFFECT_ID <succeeded|failed> OBSERVED_AT\nagent and deliberation commands use Moira's bounded public services; they never connect directly to a provider or carry authority credentials"
 }
 
 #[cfg(not(unix))]
