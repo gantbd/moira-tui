@@ -2,12 +2,14 @@
 
 use std::{error::Error, io};
 
-use moira_client::SagaReadOnlyClient;
+use moira_client::{
+    SagaReadOnlyClient,
+    unix::{SagaClientErrorV1 as ClientError, SagaUnixPort},
+};
 use moira_protocol::{ReconciliationProposalV1, SagaOutcomeV1, SagaReplyV1};
-use moira_tui_local_client::{ClientError, LocalSagaPort};
 use serde_json::json;
 
-pub fn run(port: LocalSagaPort, proposal: ReconciliationProposalV1) -> Result<(), Box<dyn Error>> {
+pub fn run(port: SagaUnixPort, proposal: ReconciliationProposalV1) -> Result<(), Box<dyn Error>> {
     let mut client = SagaReadOnlyClient::new(port);
     match client.reconciliation_confirmation(proposal) {
         Ok(SagaReplyV1::Accepted(SagaOutcomeV1::ReconciliationConfirmation(Some(value)))) => {

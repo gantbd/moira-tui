@@ -100,9 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else if args.next().is_some() {
             return Err(usage().into());
         }
-        let port = moira_tui_local_client::LocalSagaPort::connect(
+        let port = moira_client::unix::SagaUnixPort::connect(
             socket,
-            moira_tui_local_client::ClientLimits::default(),
+            moira_client::unix::SagaClientLimitsV1::default(),
         )
         .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
         let proposal = moira_protocol::ReconciliationProposalV1 { saga, disposition };
@@ -398,9 +398,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => return Err(usage().into()),
     };
-    let port = match moira_tui_local_client::LocalSagaPort::connect(
+    let port = match moira_client::unix::SagaUnixPort::connect(
         socket,
-        moira_tui_local_client::ClientLimits::default(),
+        moira_client::unix::SagaClientLimitsV1::default(),
     ) {
         Ok(port) => port,
         Err(error) if mode == "headless" => {
@@ -986,9 +986,7 @@ fn run_prompt_interactive(
 }
 
 #[cfg(unix)]
-fn run_headless(
-    port: moira_tui_local_client::LocalSagaPort,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn run_headless(port: moira_client::unix::SagaUnixPort) -> Result<(), Box<dyn std::error::Error>> {
     use moira_client::SagaReadOnlyClient;
     use moira_protocol::{SagaOutcomeV1, SagaReplyV1};
 
@@ -1059,8 +1057,8 @@ fn run_headless(
 }
 
 #[cfg(unix)]
-fn classify(error: moira_tui_local_client::ClientError) -> &'static str {
-    use moira_tui_local_client::ClientError;
+fn classify(error: moira_client::unix::SagaClientErrorV1) -> &'static str {
+    use moira_client::unix::SagaClientErrorV1 as ClientError;
     match error {
         ClientError::NotSent(_) => "not_sent",
         ClientError::OutcomeUnknown(_) => "outcome_unknown",

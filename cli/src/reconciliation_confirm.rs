@@ -2,13 +2,15 @@
 
 use std::{error::Error, io};
 
-use moira_client::SagaConfirmedReconciliationClient;
+use moira_client::{
+    SagaConfirmedReconciliationClient,
+    unix::{SagaClientErrorV1 as ClientError, SagaUnixPort},
+};
 use moira_protocol::{ConfirmedReconciliationV1, SagaOutcomeV1, SagaReplyV1};
-use moira_tui_local_client::{ClientError, LocalSagaPort};
 use serde_json::json;
 
 pub fn run(
-    port: LocalSagaPort,
+    port: SagaUnixPort,
     confirmation: ConfirmedReconciliationV1,
 ) -> Result<(), Box<dyn Error>> {
     let action = hex(&confirmation.action.0);
