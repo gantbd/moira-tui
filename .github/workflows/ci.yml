@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/agora
-          ref: 68cead6ab665c9646148f80818a7aeef92994543
+          ref: 45b11bcd1e9b7b21e79faf8f1794f8379622f635
           path: agora
           persist-credentials: false
       - name: Check out Chronos dependency
