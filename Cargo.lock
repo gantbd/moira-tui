@@ -511,6 +511,9 @@ dependencies = [
 [[package]]
 name = "moira-protocol"
 version = "0.1.0"
+dependencies = [
+ "sha2",
+]
 
 [[package]]
 name = "moira-service"
@@ -549,6 +552,7 @@ dependencies = [
  "crossterm",
  "moira-client",
  "moira-core",
+ "moira-host",
  "moira-local-daemon",
  "moira-protocol",
  "moira-service",
@@ -558,6 +562,7 @@ dependencies = [
  "moira-wire",
  "ratatui",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

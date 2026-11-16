@@ -35,7 +35,13 @@ pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
         "sagas.evidence.v1",
         "sagas.operator-receipts.v1",
     ],
-    headless: &["sagas.inspect.v1"],
+    headless: &[
+        "sagas.inspect.v1",
+        "agent.session.inspect.v1",
+        "agent.events.observe.v1",
+        "agent.participation.inspect.v1",
+        "agent.permission.confirmation-view.v1",
+    ],
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
