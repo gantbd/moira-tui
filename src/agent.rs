@@ -117,6 +117,7 @@ impl AgentComponent {
                 }
                 Lifecycle::Running
             }
+            Input::Toggle => Lifecycle::Running,
         }
     }
 

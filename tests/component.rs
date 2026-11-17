@@ -1,4 +1,11 @@
-use std::{thread, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
+    time::Duration,
+};
 
 use moira_client::SagaServicePort;
 use moira_protocol::{
@@ -88,6 +95,22 @@ impl SagaServicePort for Port {
     }
 }
 
+struct ReleasingPort(Arc<AtomicUsize>);
+
+impl Drop for ReleasingPort {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl SagaServicePort for ReleasingPort {
+    type Error = ();
+
+    fn execute(&mut self, command: SagaCommandV1) -> Result<SagaReplyV1, Self::Error> {
+        Port.execute(command)
+    }
+}
+
 fn detail_saga() -> SagaViewV1 {
     SagaViewV1 {
         saga: SagaIdV1(7),
@@ -128,12 +151,30 @@ fn component_renders_public_saga_projection() {
 }
 
 #[test]
+fn connector_component_releases_the_private_daemon_after_each_observation() {
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let worker_dropped = Arc::clone(&dropped);
+    let mut component = moira_tui::Component::new_with_connector(move || {
+        Ok::<_, ()>(ReleasingPort(Arc::clone(&worker_dropped)))
+    });
+    for _ in 0..100 {
+        if component.poll_settlement().is_some() {
+            assert_eq!(dropped.load(Ordering::SeqCst), 1);
+            return;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    panic!("connector-backed observation did not settle");
+}
+
+#[test]
 fn selected_saga_renders_bounded_evidence_and_operator_receipts() {
     let mut component = moira_tui::Component::new(Port);
     for _ in 0..100 {
         component.poll();
         let rendered = render(&component, 120, 18);
         if rendered.contains("ForwardPending") {
+            assert_eq!(component.selected_saga(), Some(SagaIdV1(7)));
             component.update(moira_tui::Input::Open, true);
             break;
         }
@@ -151,6 +192,71 @@ fn selected_saga_renders_bounded_evidence_and_operator_receipts() {
         thread::sleep(Duration::from_millis(1));
     }
     panic!("Moira component did not render bounded evidence and receipts");
+}
+
+struct ManyPort;
+
+impl SagaServicePort for ManyPort {
+    type Error = ();
+
+    fn execute(&mut self, command: SagaCommandV1) -> Result<SagaReplyV1, Self::Error> {
+        match command {
+            SagaCommandV1::Inspect { limit: 64, .. } => {
+                Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Page(SagaPageV1 {
+                    entries: (0..20)
+                        .map(|id| SagaViewV1 {
+                            saga: SagaIdV1(id),
+                            phase: SagaPhaseV1::FencedUncertain,
+                            deadline: 20,
+                            timer: TimerIdV1(id),
+                            current_effect: None,
+                            current_kind: None,
+                            retries_used: 0,
+                            retry_budget: 2,
+                        })
+                        .collect(),
+                    next_after: None,
+                })))
+            }
+            SagaCommandV1::Census => {
+                Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Census(SagaCensusV1 {
+                    total: 20,
+                    runnable_effects: 0,
+                    awaiting_decision: 0,
+                    fenced: 20,
+                    terminal: 0,
+                    retries_consumed: 0,
+                    saturated: false,
+                })))
+            }
+            _ => panic!("unexpected multi-selection request"),
+        }
+    }
+}
+
+#[test]
+fn sparse_batch_selection_is_visible_bounded_and_keeps_one_item_default() {
+    let mut component = moira_tui::Component::new(ManyPort);
+    for _ in 0..100 {
+        component.poll();
+        if render(&component, 120, 24).contains("SagaIdV1(19)") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(component.selected_sagas(), vec![SagaIdV1(0)]);
+    for index in 0..16 {
+        if index > 0 {
+            component.update(moira_tui::Input::Down, true);
+        }
+        component.update(moira_tui::Input::Toggle, true);
+    }
+    component.update(moira_tui::Input::Down, true);
+    component.update(moira_tui::Input::Toggle, true);
+    assert_eq!(component.selected_sagas().len(), 16);
+    let rendered = render(&component, 120, 24);
+    assert!(rendered.contains("[x] SagaIdV1(0)"));
+    assert!(rendered.contains("Batch selection is limited to 16 sagas"));
 }
 
 fn render(component: &moira_tui::Component, width: u16, height: u16) -> String {

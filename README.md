@@ -18,6 +18,23 @@ operator-receipt action to inspect; the CLI does not retry or infer success.
 same connection. An unknown confirmation outcome fences the control until
 refresh finds the exact durable operator receipt or proves an unchanged current
 challenge with no receipt.
+The saga list also supports a bounded sparse selection: Space marks up to 16
+sagas while the focused row remains the one-item default. The reusable batch
+reconciliation component previews every selected saga, then obtains a fresh
+server challenge immediately before each child confirmation. This is
+deliberately not an atomic batch: each child retains its own durable receipt,
+refusal, not-sent state, or outcome-unknown fence. An unknown child stops later
+sends; refresh recovers only its exact action receipt before the operator may
+explicitly arm the remaining children. The proposal disposition and all of its
+fields remain visible beside every child before arming, including exact time
+witnesses for cancellation, compensation, evidence admission, and retry. The
+timed composer accepts a bounded explicit Moira logical-time value and never
+substitutes host wall time. Effect-bearing forms bind the exact current effect
+from each selected peer projection rather than accepting free-text identities.
+Hosts of a single-connection private saga daemon can use the connector-backed
+component constructor. It acquires and releases one public-client connection
+per observation so an idle read surface cannot block a separate governed
+control until the daemon's connection timeout.
 The local saga, agent, participation, and deliberation ports reconnect only for
 a later explicit command after transport loss; they never retry the uncertain
 command. The saga fault-injected socket gate commits the mutation, discards its

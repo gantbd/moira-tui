@@ -9,6 +9,7 @@ mod participation;
 mod permission_control;
 mod prompt_control;
 mod reattach_control;
+mod reconciliation_batch;
 mod reconciliation_control;
 pub use agent::AgentComponent;
 pub use cancel_control::{CancelControlInput, CancellationControlComponent};
@@ -22,6 +23,10 @@ pub use prompt_control::{
     MAX_INTERACTIVE_PROMPT_BYTES, PromptControlComponent, PromptControlError, PromptControlInput,
 };
 pub use reattach_control::{ReattachControlComponent, ReattachControlInput};
+pub use reconciliation_batch::{
+    MAX_RECONCILIATION_BATCH, ReconciliationBatchComponent, ReconciliationBatchDisposition,
+    ReconciliationBatchInput, TimedReconciliationKind,
+};
 pub use reconciliation_control::{ReconciliationControlComponent, ReconciliationControlInput};
 
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
@@ -90,6 +95,7 @@ pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
 pub enum Input {
     Up,
     Down,
+    Toggle,
     Open,
     Back,
     Refresh,
@@ -109,6 +115,7 @@ pub fn translate_key(key: KeyEvent) -> Option<Input> {
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(Input::Up),
         KeyCode::Down | KeyCode::Char('j') => Some(Input::Down),
+        KeyCode::Char(' ') => Some(Input::Toggle),
         KeyCode::Enter => Some(Input::Open),
         KeyCode::Esc | KeyCode::Backspace => Some(Input::Back),
         KeyCode::Char('r') => Some(Input::Refresh),
@@ -156,6 +163,7 @@ pub struct Component {
     pending: Option<Request>,
     sagas: Vec<SagaViewV1>,
     selected: usize,
+    selected_batch: Vec<SagaIdV1>,
     census: Option<SagaCensusV1>,
     detail: Option<DetailObservation>,
     truncated: bool,
@@ -182,12 +190,50 @@ impl Component {
                 }
             }
         });
+        Self::with_channels(request_tx, reply_rx)
+    }
+
+    /// Builds a component that acquires and releases one public-client
+    /// connection per observation. This is intended for private daemons that
+    /// deliberately serve one connection at a time, so an idle observation
+    /// surface cannot head-of-line block a separate guarded control client.
+    pub fn new_with_connector<P, F, E>(connector: F) -> Self
+    where
+        P: SagaServicePort + Send + 'static,
+        P::Error: Send + 'static,
+        F: Fn() -> Result<P, E> + Send + 'static,
+        E: Send + 'static,
+    {
+        let (request_tx, request_rx) = sync_channel::<Request>(1);
+        let (reply_tx, reply_rx) = sync_channel::<WorkerReply>(1);
+        std::thread::spawn(move || {
+            while let Ok(request) = request_rx.recv() {
+                let reply = match connector() {
+                    Ok(port) => {
+                        let mut client = SagaReadOnlyClient::new(port);
+                        match request {
+                            Request::Inspect => inspect(&mut client),
+                            Request::Detail(saga) => detail(&mut client, saga),
+                        }
+                    }
+                    Err(_) => Err(WorkerFailure::Transport),
+                };
+                if reply_tx.send(WorkerReply { request, reply }).is_err() {
+                    break;
+                }
+            }
+        });
+        Self::with_channels(request_tx, reply_rx)
+    }
+
+    fn with_channels(request_tx: SyncSender<Request>, reply_rx: Receiver<WorkerReply>) -> Self {
         let mut component = Self {
             requests: request_tx,
             replies: reply_rx,
             pending: None,
             sagas: Vec::new(),
             selected: 0,
+            selected_batch: Vec::new(),
             census: None,
             detail: None,
             truncated: false,
@@ -198,17 +244,65 @@ impl Component {
     }
 
     pub fn poll(&mut self) {
+        let _ = self.poll_settlement();
+    }
+
+    /// Reports settlement of the latest public read for host freshness and
+    /// latency instrumentation without exposing Moira authority.
+    pub fn poll_settlement(&mut self) -> Option<Result<(), ()>> {
+        let mut settlement = None;
         loop {
             match self.replies.try_recv() {
-                Ok(reply) => self.admit(reply),
+                Ok(reply) => {
+                    settlement = Some(if self.admit(reply) { Ok(()) } else { Err(()) });
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
+                    if self.pending.is_some() {
+                        settlement = Some(Err(()));
+                    }
                     self.pending = None;
                     self.notice = "Moira worker unavailable".into();
                     break;
                 }
             }
         }
+        settlement
+    }
+
+    pub const fn request_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Returns the exact opaque saga selected by the current bounded page.
+    /// Hosts may use this only to open another Moira-owned public workflow;
+    /// it confers no reconciliation authority.
+    pub fn selected_saga(&self) -> Option<SagaIdV1> {
+        self.sagas.get(self.selected).map(|saga| saga.saga)
+    }
+
+    /// Exact bounded sparse selection in current page order. With no explicit
+    /// marks, the focused saga remains the one-item default.
+    pub fn selected_sagas(&self) -> Vec<SagaIdV1> {
+        self.selected_saga_views()
+            .into_iter()
+            .map(|saga| saga.saga)
+            .collect()
+    }
+
+    /// Exact public saga projections behind the sparse workset. This carries
+    /// only owner-published observation evidence; it confers no reconciliation
+    /// authority and lets a host bind effect-bearing proposals without
+    /// inventing or parsing effect identities.
+    pub fn selected_saga_views(&self) -> Vec<SagaViewV1> {
+        if self.selected_batch.is_empty() {
+            return self.sagas.get(self.selected).copied().into_iter().collect();
+        }
+        self.sagas
+            .iter()
+            .filter(|saga| self.selected_batch.contains(&saga.saga))
+            .copied()
+            .collect()
     }
 
     pub fn update(&mut self, input: Input, focused: bool) -> Lifecycle {
@@ -234,6 +328,8 @@ impl Component {
             Input::Back => self.detail = None,
             Input::Up => self.move_selection(false),
             Input::Down => self.move_selection(true),
+            Input::Toggle if self.detail.is_none() => self.toggle_selection(),
+            Input::Toggle => {}
             Input::Open => {}
         }
         Lifecycle::Running
@@ -323,8 +419,13 @@ impl Component {
                     .iter()
                     .enumerate()
                     .map(|(index, saga)| {
-                        let marker = if index == self.selected { ">" } else { " " };
-                        ListItem::new(format!("{marker} {:?}  {:?}", saga.saga, saga.phase))
+                        let focus = if index == self.selected { ">" } else { " " };
+                        let marked = if self.selected_batch.contains(&saga.saga) {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        ListItem::new(format!("{focus}{marked} {:?}  {:?}", saga.saga, saga.phase))
                     })
                     .collect::<Vec<_>>(),
             );
@@ -347,13 +448,15 @@ impl Component {
         }
     }
 
-    fn admit(&mut self, worker: WorkerReply) {
+    fn admit(&mut self, worker: WorkerReply) -> bool {
         self.pending = None;
         match worker.reply {
             Ok(WorkerObservation::Inspect { page, census })
                 if worker.request == Request::Inspect =>
             {
                 self.sagas = page.entries;
+                self.selected_batch
+                    .retain(|selected| self.sagas.iter().any(|saga| saga.saga == *selected));
                 self.census = Some(census);
                 self.selected = self.selected.min(self.sagas.len().saturating_sub(1));
                 self.truncated = page.next_after.is_some();
@@ -362,22 +465,33 @@ impl Component {
                 } else {
                     format!("{} saga(s)", self.sagas.len())
                 };
+                true
             }
             Ok(WorkerObservation::Detail(detail)) if detail.reconciliation.is_some() => {
                 self.detail = Some(detail);
                 self.notice = "Current evidence and reconciliation view".into();
+                true
             }
             Ok(WorkerObservation::Detail(_)) => {
                 self.notice = "Saga no longer available".into();
+                false
             }
             Err(WorkerFailure::Refused(refusal)) => {
                 self.notice = format!("Moira refused: {refusal}");
+                false
             }
-            Err(WorkerFailure::InvalidReply) => self.notice = "Invalid Moira reply".into(),
+            Err(WorkerFailure::InvalidReply) => {
+                self.notice = "Invalid Moira reply".into();
+                false
+            }
             Err(WorkerFailure::Transport) => {
                 self.notice = "Moira service unavailable; outcome not inferred".into();
+                false
             }
-            Ok(_) => self.notice = "Invalid Moira reply".into(),
+            Ok(_) => {
+                self.notice = "Invalid Moira reply".into();
+                false
+            }
         }
     }
 
@@ -389,6 +503,32 @@ impl Component {
             self.selected = (self.selected + 1).min(self.sagas.len() - 1);
         } else {
             self.selected = self.selected.saturating_sub(1);
+        }
+    }
+
+    fn toggle_selection(&mut self) {
+        const MAX_BATCH_SELECTION: usize = 16;
+        let Some(saga) = self.selected_saga() else {
+            return;
+        };
+        if let Some(index) = self
+            .selected_batch
+            .iter()
+            .position(|selected| *selected == saga)
+        {
+            self.selected_batch.remove(index);
+            self.notice = format!(
+                "{} saga(s) selected for batch work",
+                self.selected_batch.len()
+            );
+        } else if self.selected_batch.len() == MAX_BATCH_SELECTION {
+            self.notice = format!("Batch selection is limited to {MAX_BATCH_SELECTION} sagas");
+        } else {
+            self.selected_batch.push(saga);
+            self.notice = format!(
+                "{} saga(s) selected for batch work",
+                self.selected_batch.len()
+            );
         }
     }
 }

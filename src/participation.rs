@@ -81,7 +81,9 @@ impl ParticipationComponent {
                 self.offer();
                 Lifecycle::Running
             }
-            Input::Up | Input::Down | Input::Open | Input::Back => Lifecycle::Running,
+            Input::Up | Input::Down | Input::Toggle | Input::Open | Input::Back => {
+                Lifecycle::Running
+            }
         }
     }
 

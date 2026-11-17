@@ -32,12 +32,12 @@ enum Request {
     Confirm(ConfirmedReconciliationV1),
 }
 
-struct Snapshot {
-    view: SagaReconciliationViewV1,
-    confirmation: ReconciliationConfirmationV1,
+pub(crate) struct Snapshot {
+    pub(crate) view: SagaReconciliationViewV1,
+    pub(crate) confirmation: ReconciliationConfirmationV1,
 }
 
-enum Observation {
+pub(crate) enum Observation {
     Current(Box<Snapshot>),
     Recovered(OperatorReceiptSummaryV1),
     Applied { replayed: bool },
@@ -69,39 +69,40 @@ impl ReconciliationControlComponent {
     {
         let (request_tx, request_rx) = sync_channel(1);
         let (reply_tx, reply_rx) = sync_channel(1);
+        std::thread::spawn(move || worker_loop(port, proposal, None, request_rx, reply_tx));
+        Self::from_channels(request_tx, reply_rx, proposal)
+    }
+
+    /// Opens the workflow without blocking the host update thread; transport
+    /// establishment and the initial stable snapshot run on the worker.
+    pub fn new_with_connector<P, F, E>(connector: F, proposal: ReconciliationProposalV1) -> Self
+    where
+        P: SagaServicePort + Send + 'static,
+        P::Error: Send + 'static,
+        F: FnOnce() -> Result<P, E> + Send + 'static,
+        E: Send + 'static,
+    {
+        let (request_tx, request_rx) = sync_channel(1);
+        let (reply_tx, reply_rx) = sync_channel(1);
         std::thread::spawn(move || {
-            let mut port = Some(port);
-            while let Ok(request) = request_rx.recv() {
-                let observation = match request {
-                    Request::Refresh(recovery) => {
-                        let mut client = SagaReadOnlyClient::new(port.take().expect("saga port"));
-                        let observation = stable_snapshot(&mut client, proposal, recovery);
-                        port = Some(client.into_port());
-                        observation
-                    }
-                    Request::Confirm(confirmation) => {
-                        let action = confirmation.action;
-                        let mut client =
-                            SagaConfirmedReconciliationClient::new(port.take().expect("saga port"));
-                        let observation = match client.confirm(confirmation) {
-                            Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Applied {
-                                replayed, ..
-                            })) => Observation::Applied { replayed },
-                            Ok(SagaReplyV1::Refused(refusal)) => {
-                                Observation::Refused(format!("{refusal:?}"))
-                            }
-                            Ok(_) => Observation::InvalidReply,
-                            Err(_) => Observation::OutcomeUnknown(action),
-                        };
-                        port = Some(client.into_port());
-                        observation
-                    }
-                };
-                if reply_tx.send(observation).is_err() {
-                    break;
+            let Ok(first_request) = request_rx.recv() else {
+                return;
+            };
+            match connector() {
+                Ok(port) => worker_loop(port, proposal, Some(first_request), request_rx, reply_tx),
+                Err(_) => {
+                    let _ = reply_tx.send(Observation::ReadUnavailable);
                 }
             }
         });
+        Self::from_channels(request_tx, reply_rx, proposal)
+    }
+
+    fn from_channels(
+        request_tx: SyncSender<Request>,
+        reply_rx: Receiver<Observation>,
+        proposal: ReconciliationProposalV1,
+    ) -> Self {
         let mut value = Self {
             requests: request_tx,
             replies: reply_rx,
@@ -132,11 +133,29 @@ impl ReconciliationControlComponent {
         }
     }
 
+    /// Current peer-owned workflow status for host chrome and activity logs.
+    /// It is presentation evidence only and never authorizes another effect.
+    pub fn notice(&self) -> &str {
+        &self.notice
+    }
+
+    pub const fn request_pending(&self) -> bool {
+        self.pending
+    }
+
+    pub const fn recovery_required(&self) -> bool {
+        self.fenced_action.is_some()
+    }
+
     pub fn update(&mut self, input: ReconciliationControlInput, focused: bool) -> Lifecycle {
         if !focused {
             return Lifecycle::Running;
         }
         match input {
+            ReconciliationControlInput::Close if self.pending || self.fenced_action.is_some() => {
+                self.notice =
+                    "Reconciliation is unresolved; wait or recover the exact receipt first".into();
+            }
             ReconciliationControlInput::Close => return Lifecycle::CloseRequested,
             ReconciliationControlInput::Refresh => {
                 self.armed = false;
@@ -292,7 +311,54 @@ impl ReconciliationControlComponent {
     }
 }
 
-fn stable_snapshot<P: SagaServicePort>(
+fn worker_loop<P: SagaServicePort>(
+    port: P,
+    proposal: ReconciliationProposalV1,
+    mut first_request: Option<Request>,
+    request_rx: Receiver<Request>,
+    reply_tx: SyncSender<Observation>,
+) {
+    let mut port = Some(port);
+    loop {
+        let request = if let Some(request) = first_request.take() {
+            request
+        } else if let Ok(request) = request_rx.recv() {
+            request
+        } else {
+            break;
+        };
+        let observation = match request {
+            Request::Refresh(recovery) => {
+                let mut client = SagaReadOnlyClient::new(port.take().expect("saga port"));
+                let observation = stable_snapshot(&mut client, proposal, recovery);
+                port = Some(client.into_port());
+                observation
+            }
+            Request::Confirm(confirmation) => {
+                let action = confirmation.action;
+                let mut client =
+                    SagaConfirmedReconciliationClient::new(port.take().expect("saga port"));
+                let observation = match client.confirm(confirmation) {
+                    Ok(SagaReplyV1::Accepted(SagaOutcomeV1::Applied { replayed, .. })) => {
+                        Observation::Applied { replayed }
+                    }
+                    Ok(SagaReplyV1::Refused(refusal)) => {
+                        Observation::Refused(format!("{refusal:?}"))
+                    }
+                    Ok(_) => Observation::InvalidReply,
+                    Err(_) => Observation::OutcomeUnknown(action),
+                };
+                port = Some(client.into_port());
+                observation
+            }
+        };
+        if reply_tx.send(observation).is_err() {
+            break;
+        }
+    }
+}
+
+pub(crate) fn stable_snapshot<P: SagaServicePort>(
     client: &mut SagaReadOnlyClient<P>,
     proposal: ReconciliationProposalV1,
     recovery: Option<OperatorActionIdV1>,

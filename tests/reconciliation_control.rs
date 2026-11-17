@@ -118,6 +118,10 @@ fn unknown_reconciliation_fences_until_exact_receipt_recovery() {
     component.update(moira_tui::ReconciliationControlInput::Confirm, true);
     wait_for(&mut component, "OUTCOME UNKNOWN");
     assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        component.update(moira_tui::ReconciliationControlInput::Close, true),
+        moira_tui::Lifecycle::Running
+    );
 
     component.update(moira_tui::ReconciliationControlInput::Arm, true);
     component.update(moira_tui::ReconciliationControlInput::Confirm, true);

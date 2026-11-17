@@ -157,6 +157,7 @@ impl DeliberationComponent {
                 }
                 Lifecycle::Running
             }
+            Input::Toggle => Lifecycle::Running,
         }
     }
 

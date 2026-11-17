@@ -11,6 +11,24 @@ fn reusable_component_has_no_cli_or_terminal_owner() {
 }
 
 #[test]
+fn batch_reconciliation_preserves_independent_owner_guards_and_receipts() {
+    let source = include_str!("../src/reconciliation_batch.rs");
+    for required in [
+        "MAX_RECONCILIATION_BATCH",
+        "stable_snapshot(&mut reader, proposal, None)",
+        "operator_receipt(action)",
+        "ChildState::NotSent",
+        "Confirmation::OutcomeUnknown",
+        "break;",
+    ] {
+        assert!(source.contains(required), "batch omits {required}");
+    }
+    for forbidden in ["SagaOperatorClient", "SagaCommandV1::Reconcile", "retry("] {
+        assert!(!source.contains(forbidden), "batch imports {forbidden}");
+    }
+}
+
+#[test]
 fn capability_manifest_advertises_every_headless_governed_control_schema() {
     let headless = moira_tui::CAPABILITIES.headless;
     for capability in [

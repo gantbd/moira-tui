@@ -22,6 +22,13 @@ and Workbench are separate composition roots.
   Operator authority remains daemon-owned;
   the presentation package carries only the exact revision, digest,
   disposition, and derived receipt identity returned by Moira.
+- [Qualified] The reusable saga list marks a sparse bounded set of up to 16
+  sagas. Batch reconciliation preserves the owner's per-saga contract: every
+  child is re-inspected just-in-time because a preceding reconciliation changes
+  the global storage revision, each successful child reads its own durable
+  operator receipt, and an unknown child stops all later sends until exact
+  receipt recovery. Partial, refused, not-sent, receipt-pending, and unknown
+  children remain distinct; no aggregate atomic-success claim is made.
 - Read-only `agent-inspect` and cursor-based `agent-events` headless commands
   over Moira's distinct bounded agent wire; no direct Daimon/provider access.
   A real-daemon gate preserves the complete eight-bit capability projection in
