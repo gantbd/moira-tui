@@ -22,6 +22,26 @@ impl AgentParticipationServicePort for Port {
     }
 }
 
+struct SequencePort {
+    observations: Vec<(u64, d::PersonaLensV1)>,
+    next: usize,
+}
+
+impl AgentParticipationServicePort for SequencePort {
+    type Error = ();
+
+    fn execute_participation(&mut self, _: p::CommandV1) -> Result<p::ReplyV1, Self::Error> {
+        let (revision, persona) = self.observations[self.next.min(self.observations.len() - 1)];
+        self.next += 1;
+        let mut value = view();
+        value.revision = revision;
+        value.binding.persona = persona;
+        Ok(p::ReplyV1::Accepted(Box::new(p::OutcomeV1::Participation(
+            Some(value),
+        ))))
+    }
+}
+
 #[test]
 fn component_renders_only_the_public_governed_projection() {
     let mut component = moira_tui::ParticipationComponent::new(Port, p::ParticipationIdV1([1; 16]));
@@ -55,6 +75,47 @@ fn component_renders_only_the_public_governed_projection() {
         thread::sleep(Duration::from_millis(1));
     }
     panic!("participation component did not render its accepted projection");
+}
+
+#[test]
+fn component_orients_revision_advances_and_rejects_owner_regression_or_rewrite() {
+    let port = SequencePort {
+        observations: vec![
+            (14, d::PersonaLensV1::Historian),
+            (15, d::PersonaLensV1::Historian),
+            (14, d::PersonaLensV1::Historian),
+            (15, d::PersonaLensV1::Researcher),
+        ],
+        next: 0,
+    };
+    let mut component = moira_tui::ParticipationComponent::new(port, p::ParticipationIdV1([1; 16]));
+
+    wait_for(&mut component, "Current governed revision 14");
+    let _ = component.update(moira_tui::Input::Refresh, true);
+    let advanced = wait_for(&mut component, "Governed revision advanced 14 → 15");
+    assert!(advanced.contains("participation revision: 15"));
+    assert!(advanced.contains("previously observed revision: 14"));
+
+    let _ = component.update(moira_tui::Input::Refresh, true);
+    let regressed = wait_for(&mut component, "Moira revision regressed 15 → 14");
+    assert!(regressed.contains("participation revision: 15"));
+
+    let _ = component.update(moira_tui::Input::Refresh, true);
+    let rewritten = wait_for(&mut component, "Moira changed revision 15 in place");
+    assert!(rewritten.contains("persona: Historian"));
+    assert!(!rewritten.contains("persona: Researcher"));
+}
+
+fn wait_for(component: &mut moira_tui::ParticipationComponent, expected: &str) -> String {
+    for _ in 0..100 {
+        component.poll();
+        let rendered = render(component);
+        if rendered.contains(expected) {
+            return rendered;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    panic!("participation component did not render {expected:?}");
 }
 
 fn render(component: &moira_tui::ParticipationComponent) -> String {

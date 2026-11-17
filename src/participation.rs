@@ -26,6 +26,7 @@ pub struct ParticipationComponent {
     replies: Receiver<Observation>,
     pending: bool,
     view: Option<participation::ParticipationViewV1>,
+    prior_revision: Option<u64>,
     notice: String,
 }
 
@@ -51,6 +52,7 @@ impl ParticipationComponent {
             replies: reply_rx,
             pending: false,
             view: None,
+            prior_revision: None,
             notice: "Governed participation ready; refresh queued".into(),
         };
         component.offer();
@@ -97,7 +99,7 @@ impl ParticipationComponent {
         };
         let lines = self.view.as_ref().map_or_else(
             || vec![Line::from("No current governed participation")],
-            participation_lines,
+            |view| participation_lines(view, self.prior_revision),
         );
         frame.render_widget(
             Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
@@ -121,11 +123,37 @@ impl ParticipationComponent {
         self.pending = false;
         match observation {
             Observation::Current(view) => {
+                if let Some(current) = self.view.as_ref() {
+                    if view.revision < current.revision {
+                        self.notice = format!(
+                            "Moira revision regressed {} → {}; keeping last trusted projection",
+                            current.revision, view.revision
+                        );
+                        return;
+                    }
+                    if view.revision == current.revision && view.as_ref() != current {
+                        self.notice = format!(
+                            "Moira changed revision {} in place; keeping last trusted projection",
+                            current.revision
+                        );
+                        return;
+                    }
+                    if view.revision > current.revision {
+                        self.prior_revision = Some(current.revision);
+                        self.notice = format!(
+                            "Governed revision advanced {} → {}",
+                            current.revision, view.revision
+                        );
+                        self.view = Some(*view);
+                        return;
+                    }
+                }
                 self.notice = format!("Current governed revision {}", view.revision);
                 self.view = Some(*view);
             }
             Observation::NotFound => {
                 self.view = None;
+                self.prior_revision = None;
                 self.notice = "Governed participation not found".into();
             }
             Observation::Refused(refusal) => {
@@ -158,7 +186,10 @@ fn observe<P: AgentParticipationServicePort>(
     }
 }
 
-fn participation_lines(view: &participation::ParticipationViewV1) -> Vec<Line<'static>> {
+fn participation_lines(
+    view: &participation::ParticipationViewV1,
+    prior_revision: Option<u64>,
+) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from("principal type: agent"),
         Line::from("accountable owner: Moira"),
@@ -168,6 +199,10 @@ fn participation_lines(view: &participation::ParticipationViewV1) -> Vec<Line<'s
         )),
         Line::from(format!("phase: {:?}", view.phase)),
         Line::from(format!("participation revision: {}", view.revision)),
+        Line::from(format!(
+            "previously observed revision: {}",
+            prior_revision.map_or_else(|| "none".into(), |revision| revision.to_string())
+        )),
         Line::from(format!("session revision: {:?}", view.session_revision)),
         Line::from(format!("event cursor: {:?}", view.last_event_cursor)),
         Line::from(format!("workflow: {}", hex_bytes(&view.binding.workflow.0))),
