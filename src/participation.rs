@@ -160,16 +160,56 @@ fn observe<P: AgentParticipationServicePort>(
 
 fn participation_lines(view: &participation::ParticipationViewV1) -> Vec<Line<'static>> {
     let mut lines = vec![
+        Line::from("principal type: agent"),
+        Line::from("accountable owner: Moira"),
+        Line::from(format!(
+            "participation: {}",
+            hex_bytes(&view.binding.participation.0)
+        )),
         Line::from(format!("phase: {:?}", view.phase)),
         Line::from(format!("participation revision: {}", view.revision)),
         Line::from(format!("session revision: {:?}", view.session_revision)),
         Line::from(format!("event cursor: {:?}", view.last_event_cursor)),
-        Line::from(format!("attempt: {}", view.binding.attempt.attempt)),
-        Line::from(format!("incarnation: {}", view.binding.attempt.incarnation)),
+        Line::from(format!("workflow: {}", hex_bytes(&view.binding.workflow.0))),
+        Line::from(format!(
+            "deliberation: {}",
+            hex_bytes(&view.binding.deliberation.0)
+        )),
+        Line::from(format!("member: {}", hex_bytes(&view.binding.member.0))),
+        Line::from(format!("session: {}", hex_bytes(&view.binding.session.0))),
+        Line::from(format!("profile: {}", hex_bytes(&view.binding.profile.0))),
+        Line::from(format!(
+            "task: {} · incarnation {} · attempt {}",
+            hex_bytes(&view.binding.attempt.task_key),
+            view.binding.attempt.incarnation,
+            view.binding.attempt.attempt
+        )),
         Line::from(format!("persona: {:?}", view.binding.persona)),
         Line::from(format!(
             "grounding depth: {:?}",
             view.binding.grounding.depth
+        )),
+        Line::from(format!(
+            "grounding authority: {}",
+            hex_bytes(&view.binding.grounding.authority_digest)
+        )),
+        Line::from(format!(
+            "grounding surface: {}",
+            hex_bytes(&view.binding.grounding.surface_digest)
+        )),
+        Line::from(format!(
+            "method machine: {}",
+            hex_bytes(&view.binding.method.machine_digest)
+        )),
+        Line::from(format!(
+            "method state: {}",
+            hex_bytes(&view.binding.method.state_digest)
+        )),
+        Line::from(format!(
+            "profile document: {}",
+            view.profile_document_digest
+                .map(|digest| hex_bytes(&digest))
+                .unwrap_or_else(|| "not published".into())
         )),
         Line::from(format!("active turn: {}", view.active_turn.is_some())),
         Line::from(format!(
@@ -190,6 +230,9 @@ fn participation_lines(view: &participation::ParticipationViewV1) -> Vec<Line<'s
             view.capabilities.session_modes,
             view.capabilities.session_models
         )),
+        Line::from(
+            "not published: role/work mode · scope · delegation · budgets · authority reference · policy epoch · expiry · accountable human",
+        ),
     ];
     if let Some(permission) = view.permission {
         lines.push(Line::from(format!(
@@ -204,6 +247,15 @@ fn participation_lines(view: &participation::ParticipationViewV1) -> Vec<Line<'s
         )));
     }
     lines
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut value = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        write!(&mut value, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    value
 }
 
 fn operation_kind(value: participation::OperationV1) -> &'static str {

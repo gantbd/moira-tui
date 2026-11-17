@@ -30,13 +30,26 @@ fn component_renders_only_the_public_governed_projection() {
         let rendered = render(&component);
         if rendered.contains("AwaitingPermission") {
             assert!(rendered.contains("participation revision: 14"));
-            assert!(rendered.contains("attempt: 9"));
+            assert!(rendered.contains("principal type: agent"));
+            assert!(rendered.contains("accountable owner: Moira"));
+            assert!(rendered.contains("participation: 01010101010101010101010101010101"));
+            assert!(rendered.contains("workflow: 02020202020202020202020202020202"));
+            assert!(
+                rendered
+                    .contains("task: 07070707070707070707070707070707 · incarnation 8 · attempt 9")
+            );
             assert!(rendered.contains("persona: Historian"));
             assert!(rendered.contains("grounding depth: Reference"));
+            assert!(rendered.contains("grounding authority: 0c0c0c0c"));
+            assert!(rendered.contains("method machine: 0a0a0a0a"));
+            assert!(rendered.contains("profile document: 11111111"));
             assert!(rendered.contains("permission: 2 exact option(s)"));
             assert!(rendered.contains("pending operation: none"));
             assert!(rendered.contains("permission=true read=true write=false terminal=true"));
             assert!(rendered.contains("load=true resume=true modes=true models=true"));
+            assert!(
+                rendered.contains("not published: role/work mode · scope · delegation · budgets")
+            );
             return;
         }
         thread::sleep(Duration::from_millis(1));
@@ -45,7 +58,7 @@ fn component_renders_only_the_public_governed_projection() {
 }
 
 fn render(component: &moira_tui::ParticipationComponent) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(140, 32)).unwrap();
     terminal
         .draw(|frame| component.draw_in(frame, frame.area(), true))
         .unwrap();
