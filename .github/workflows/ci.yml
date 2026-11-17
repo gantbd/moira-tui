@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/aegis
-          ref: b272106cf6d0093839a7d696c829bf8a408b0306
+          ref: 0446e4fcf7412be9e0313523235d4e674d2fdd94
           path: aegis
           persist-credentials: false
       - name: Check out Agora dependency
@@ -47,29 +47,36 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/chronos
-          ref: ebff27188388cd0249d07751b1cc848c6ef1a3f9
+          ref: 26366ec9172b48280d9bba3688572edf1c0d2719
           path: chronos
           persist-credentials: false
       - name: Check out Daimon dependency
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/daimon
-          ref: 325e662a6a945cf8a064b9812ebbbdac02be4130
+          ref: b33ca7427cfe0baaeb2f3d53dd287d3185262b32
           path: daimon
           persist-credentials: false
       - name: Check out Hermes dependency
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/hermes
-          ref: 3f60c1c7b00b1a61230508b11422ddfc84b61856
+          ref: f5e5f12a5cd258f38bf5f1b004ed7a961d14bf08
           path: hermes
           persist-credentials: false
       - name: Check out Moira dependency
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/moira
-          ref: f3861a142f2db399cb1ad3c2b352a4e695f65ecc
+          ref: aea0842ef0c4b0421df14cf7a68c1c8afe0be5c9
           path: moira
+          persist-credentials: false
+      - name: Check out Vellum dependency
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: gantbd/vellum
+          ref: 898affc1860869ab7fd4d4de369ca3556bc12aaf
+          path: vellum
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
