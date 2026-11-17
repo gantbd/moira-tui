@@ -54,21 +54,21 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/daimon
-          ref: ca358a46e7b18b0b93599d0e7cc1bfdff36e3636
+          ref: ad70f838cf5533e1a28dcfff384fbfa432bd91da
           path: daimon
           persist-credentials: false
       - name: Check out Hermes dependency
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/hermes
-          ref: f5e5f12a5cd258f38bf5f1b004ed7a961d14bf08
+          ref: e666416071d1b5b6f4bdb7669a3984ef6d8a3162
           path: hermes
           persist-credentials: false
       - name: Check out Moira dependency
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/moira
-          ref: 23f32236b0d1b43138835df3813271b1bacd58f2
+          ref: 113d7d2cdc0c80a02fed8439a551f7b6bf8aaea5
           path: moira
           persist-credentials: false
       - name: Check out Vellum dependency
