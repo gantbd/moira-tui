@@ -68,7 +68,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/moira
-          ref: 113d7d2cdc0c80a02fed8439a551f7b6bf8aaea5
+          ref: f7d35fc09e7b03dbe72ec96733817d9a01826c4f
           path: moira
           persist-credentials: false
       - name: Check out Vellum dependency
