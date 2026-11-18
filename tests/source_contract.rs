@@ -70,6 +70,18 @@ fn reattach_control_carries_only_server_confirmation_and_no_execution_material()
 }
 
 #[test]
+fn open_control_uses_only_the_owner_derived_preparation_client() {
+    let interactive = include_str!("../src/open_control.rs");
+    assert!(interactive.contains("AgentParticipationOpenClient"));
+    assert!(interactive.contains("PrepareAgentOpenDispositionV1"));
+    assert!(!interactive.contains("AgentParticipationMutationClient"));
+    assert!(!interactive.contains("IdempotencyKeyV1"));
+    assert!(!interactive.contains("ExecutionIdV1"));
+    assert!(!interactive.contains("daimon"));
+    assert!(!interactive.contains("aegis"));
+}
+
+#[test]
 fn headless_cli_uses_public_read_only_client_without_tui_state() {
     let source = include_str!("../cli/src/main.rs");
     let headless = source.split("fn run_headless").nth(1).unwrap();

@@ -108,6 +108,9 @@ fn view() -> d::DeliberationViewV1 {
         plan: d::DeliberationPlanV1 {
             id: d::DeliberationIdV1([1; 16]),
             question_digest: [2; 32],
+            admission: d::EnsembleAdmissionV1::affirmed(
+                [31; 32], [32; 32], [33; 32], [34; 32], [35; 16],
+            ),
             method: d::MethodRefV1 {
                 machine_digest: [3; 32],
                 state_digest: [4; 32],
@@ -123,6 +126,7 @@ fn view() -> d::DeliberationViewV1 {
             }],
             members: vec![d::EnsembleMemberV1 {
                 id: d::EnsembleMemberIdV1([9; 16]),
+                stakeholder: d::StakeholderRefV1::technical_sme([29; 16], [30; 32]),
                 lens: d::PersonaLensV1::Historian,
                 concern_root_digest: [10; 32],
                 grounding: d::GroundingRefV1 {

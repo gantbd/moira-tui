@@ -328,6 +328,7 @@ mod tests {
                 permissions: true,
                 ..agent::CapabilitiesV1::default()
             },
+            last_context: None,
         };
         let records = vec![agent::EventRecordV1 {
             cursor: 0,

@@ -242,6 +242,9 @@ fn apply(
 fn plan() -> DeliberationPlanV1 {
     DeliberationPlanV1 {
         id: DeliberationIdV1([1; 16]),
+        admission: moira_protocol::deliberation::EnsembleAdmissionV1::affirmed(
+            [21; 32], [22; 32], [23; 32], [24; 32], [25; 16],
+        ),
         question_digest: [20; 32],
         method: MethodRefV1 {
             machine_digest: [2; 32],
@@ -259,6 +262,9 @@ fn plan() -> DeliberationPlanV1 {
         members: vec![EnsembleMemberV1 {
             id: EnsembleMemberIdV1([6; 16]),
             lens: PersonaLensV1::Historian,
+            stakeholder: moira_protocol::deliberation::StakeholderRefV1::technical_sme(
+                [26; 16], [27; 32],
+            ),
             concern_root_digest: [7; 32],
             grounding: GroundingRefV1 {
                 authority_digest: [8; 32],

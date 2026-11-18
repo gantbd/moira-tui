@@ -356,6 +356,7 @@ mod tests {
                 active_turn: None,
                 last_event_cursor: None,
                 capabilities: CapabilitiesV1::default(),
+                last_context: None,
             }));
             let bytes = moira_wire::encode_agent_reply(&reply, LimitsV1::default()).unwrap();
             write_frame(&mut server, &bytes).unwrap();
@@ -615,6 +616,7 @@ mod tests {
                     active_turn: None,
                     last_event_cursor: None,
                     capabilities: CapabilitiesV1::default(),
+                    last_context: None,
                 }));
                 let bytes = moira_wire::encode_agent_reply(&reply, LimitsV1::default()).unwrap();
                 write_frame(&mut stream, &bytes).unwrap();

@@ -275,6 +275,7 @@ fn fixture() -> (
         profile_document_digest: agent::DigestV1([17; 32]),
         active_turn: Some(request.turn),
         last_event_cursor: Some(0),
+        last_context: None,
         capabilities: agent::CapabilitiesV1 {
             permissions: true,
             ..agent::CapabilitiesV1::default()

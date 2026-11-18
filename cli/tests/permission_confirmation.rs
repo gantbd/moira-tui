@@ -161,6 +161,7 @@ fn cli_views_then_confirms_only_the_server_prepared_permission() {
             permissions: true,
             ..agent::CapabilitiesV1::default()
         },
+        last_context: None,
     };
     let mut agent_daemon = AgentDaemon::bind_new(
         &agent_socket,
@@ -601,7 +602,7 @@ fn reusable_participation_component_reads_the_real_bounded_daemon() {
     let mut component = moira_tui::ParticipationComponent::new(port, binding.participation);
     for _ in 0..100 {
         component.poll();
-        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         terminal
             .draw(|frame| component.draw_in(frame, frame.area(), true))
             .unwrap();
@@ -645,6 +646,7 @@ fn reusable_agent_component_reads_one_stable_real_daemon_connection() {
             permissions: true,
             ..agent::CapabilitiesV1::default()
         },
+        last_context: None,
     };
     let mut daemon = AgentDaemon::bind_new(
         &socket,
@@ -699,6 +701,7 @@ fn agent_inspect_cli_preserves_the_complete_public_capability_projection() {
             session_modes: true,
             session_models: true,
         },
+        last_context: None,
     };
     let mut daemon = AgentDaemon::bind_new(
         &socket,
@@ -769,6 +772,7 @@ fn reusable_agent_component_reconnects_after_agent_daemon_rebind() {
             permissions: true,
             ..agent::CapabilitiesV1::default()
         },
+        last_context: None,
     };
     let daemon = AgentDaemon::bind_new(
         &socket,
@@ -1244,6 +1248,7 @@ fn interactive_permission_recovers_authorized_state_after_a_lost_reply_without_r
             permissions: true,
             ..agent::CapabilitiesV1::default()
         },
+        last_context: None,
     };
 
     let participation_listener = UnixListener::bind(&participation_socket).unwrap();
@@ -1462,6 +1467,7 @@ fn interactive_permission_component_uses_one_connection_per_real_daemon() {
             permissions: true,
             ..agent::CapabilitiesV1::default()
         },
+        last_context: None,
     };
     let mut agent_daemon = AgentDaemon::bind_new(
         &agent_socket,

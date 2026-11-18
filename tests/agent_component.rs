@@ -181,6 +181,7 @@ fn view(mode: PageMode) -> a::SessionViewV1 {
             PageMode::Truncated => Some(64),
             PageMode::Recovery => None,
         },
+        last_context: None,
         capabilities: a::CapabilitiesV1 {
             load_session: true,
             resume_session: true,

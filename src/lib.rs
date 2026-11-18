@@ -5,6 +5,7 @@
 mod agent;
 mod cancel_control;
 mod deliberation;
+mod open_control;
 mod participation;
 mod permission_control;
 mod prompt_control;
@@ -14,6 +15,7 @@ mod reconciliation_control;
 pub use agent::AgentComponent;
 pub use cancel_control::{CancelControlInput, CancellationControlComponent};
 pub use deliberation::{DeliberationComponent, DeliberationObservation, observe_deliberation};
+pub use open_control::{OpenControlComponent, OpenControlInput};
 pub use participation::ParticipationComponent;
 pub use permission_control::{
     PermissionControlComponent, PermissionControlInput, permission_options_digest,
@@ -65,6 +67,7 @@ pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
         "sagas.reconciliation.confirm.v1",
         "sagas.reconciliation.recovery.v1",
         "agent.participation.inspect.v1",
+        "agent.open.prepare.v1",
         "agent.session.observe.v1",
         "agent.cancel.confirm.v1",
         "agent.reattach.confirm.v1",
