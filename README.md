@@ -82,8 +82,11 @@ reusable component over the same private Unix service profile.
 `deliberation-inspect` emits a versioned `deliberation.inspect.v1` observation
 over Moira's independent public deliberation client. It preserves exact Rune
 method and Dendrite grounding digests, persona lenses, claim kinds, candidate
-scores, report evidence and dissent, and the retained proof/authorized-choice/
-maybe/mu resolution without recomputing a frontier or treating it as authority.
+scores, the explicit “right ensemble?” fitness and coverage/equity evidence,
+stakeholder representation and standing distinct from persona, report evidence
+and dissent, and the retained proof/authorized-choice/maybe/mu resolution
+without recomputing a frontier or treating it as authority. Standalone and
+composed hosts share one owner-defined JSON projection.
 `deliberation-interactive` hosts the reusable read-only component over the same
 bounded private service. Both paths read the registry revision before and after
 the deliberation and reject a mixed snapshot; the real-daemon gate reopens the

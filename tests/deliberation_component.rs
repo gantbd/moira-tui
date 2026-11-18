@@ -55,7 +55,7 @@ fn component_renders_persona_dissent_candidates_and_retained_choice() {
         let rendered = render(&component);
         if rendered.contains("Stable registry revision 7") {
             assert!(rendered.contains("phase: Resolved"));
-            assert!(rendered.contains("right ensemble? Yes"));
+            assert!(rendered.contains("right ensemble? Contested"));
             assert!(rendered.contains("ensemble coverage:"));
             assert!(rendered.contains("ensemble equity:"));
             assert!(rendered.contains("persona Historian"));
@@ -93,6 +93,20 @@ fn component_rejects_a_view_observed_across_registry_revision_change() {
     panic!("component admitted a mixed-revision deliberation");
 }
 
+#[test]
+fn reusable_projection_preserves_contested_admission_and_stakeholder_standing() {
+    let value = moira_tui::deliberation_view_json(view());
+    assert_eq!(value["admission"]["fitness"], "contested");
+    assert_eq!(
+        value["members"][0]["stakeholder"]["representation"],
+        "technical_sme"
+    );
+    assert_eq!(
+        value["members"][0]["stakeholder"]["accountable_principal"],
+        serde_json::Value::Null
+    );
+}
+
 fn render(component: &moira_tui::DeliberationComponent) -> String {
     let mut terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
     terminal
@@ -113,9 +127,14 @@ fn view() -> d::DeliberationViewV1 {
         plan: d::DeliberationPlanV1 {
             id: d::DeliberationIdV1([1; 16]),
             question_digest: [2; 32],
-            admission: d::EnsembleAdmissionV1::affirmed(
-                [31; 32], [32; 32], [33; 32], [34; 32], [35; 16],
-            ),
+            admission: d::EnsembleAdmissionV1 {
+                affected_population_digest: [31; 32],
+                stakeholder_map_digest: [32; 32],
+                coverage_manifest_digest: [33; 32],
+                equity_assessment_digest: [34; 32],
+                assessor_principal: [35; 16],
+                fitness: d::EnsembleFitnessV1::Contested,
+            },
             method: d::MethodRefV1 {
                 machine_digest: [3; 32],
                 state_digest: [4; 32],

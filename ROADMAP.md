@@ -94,8 +94,9 @@ and Workbench are separate composition roots.
   proves the unknown fence blocks re-arm and an explicit refresh reconnects to
   observe that durable pending operation without another prompt frame.
 - [Qualified] `deliberation-inspect` and the reusable
-  `DeliberationComponent` expose exact personas, grounding, claims, candidates,
-  report evidence/dissent, and retained proof/authorized-choice/maybe/mu
+  `DeliberationComponent` expose exact ensemble admission and coverage/equity
+  evidence, stakeholder representation/standing distinct from persona,
+  grounding, claims, candidates, report evidence/dissent, and retained proof/authorized-choice/maybe/mu
   resolution through Moira's distinct canonical wire and read-only private
   daemon. Both double-read the registry revision and refuse a mixed snapshot;
   neither recomputes the Pareto frontier nor constructs authority.

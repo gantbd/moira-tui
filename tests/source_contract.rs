@@ -283,9 +283,10 @@ fn deliberation_views_use_only_the_stable_public_read_model() {
         assert!(!source.contains("aegis"));
     }
     assert!(component.matches("client.status()").count() >= 2);
-    assert!(headless.contains("dissent_digests"));
-    assert!(headless.contains("authorized_choice"));
-    assert!(headless.contains("\"mu\""));
+    assert!(headless.contains("moira_tui::deliberation_view_json"));
+    assert!(component.contains("dissent_digests"));
+    assert!(component.contains("authorized_choice"));
+    assert!(component.contains("\"mu\""));
 }
 
 #[test]
