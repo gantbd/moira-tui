@@ -246,6 +246,21 @@ fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'stat
         format!("remaining fuel: {}", view.remaining_fuel),
         format!("question: {}", digest(view.plan.question_digest)),
         format!(
+            "right ensemble? {:?} assessor={}",
+            view.plan.admission.fitness,
+            identity(view.plan.admission.assessor_principal)
+        ),
+        format!(
+            "ensemble coverage: affected={} stakeholder-map={} manifest={}",
+            digest(view.plan.admission.affected_population_digest),
+            digest(view.plan.admission.stakeholder_map_digest),
+            digest(view.plan.admission.coverage_manifest_digest)
+        ),
+        format!(
+            "ensemble equity: assessment={}",
+            digest(view.plan.admission.equity_assessment_digest)
+        ),
+        format!(
             "method: machine={} state={}",
             digest(view.plan.method.machine_digest),
             digest(view.plan.method.state_digest)
@@ -266,6 +281,18 @@ fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'stat
             digest(member.concern_root_digest),
             member.grounding.depth,
             digest(member.grounding.surface_digest)
+        ));
+        values.push(format!(
+            "stakeholder {:?}: principal={} constituency={}",
+            member.stakeholder.representation,
+            identity(member.stakeholder.principal),
+            digest(member.stakeholder.constituency_digest)
+        ));
+        values.push(format!(
+            "stakeholder standing: accountable={} mandate={} conflict={}",
+            optional_identity(member.stakeholder.accountable_principal),
+            optional_digest(member.stakeholder.mandate_digest),
+            optional_digest(member.stakeholder.conflict_digest)
         ));
     }
     for report in &view.reports {
@@ -296,6 +323,14 @@ fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'stat
             ))
         })
         .collect()
+}
+
+fn optional_identity(value: Option<[u8; 16]>) -> String {
+    value.map_or_else(|| "none".into(), identity)
+}
+
+fn optional_digest(value: Option<[u8; 32]>) -> String {
+    value.map_or_else(|| "none".into(), digest)
 }
 
 fn resolution_summary(value: Option<&d::ResolutionV1>) -> String {

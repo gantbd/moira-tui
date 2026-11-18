@@ -157,7 +157,20 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
     assert_eq!(value["status"], "current");
     assert_eq!(value["registry_revision"], 3);
     assert_eq!(value["deliberation"]["phase"], "resolved");
+    assert_eq!(value["deliberation"]["admission"]["fitness"], "yes");
+    assert_eq!(
+        value["deliberation"]["admission"]["assessor_principal"],
+        "19191919191919191919191919191919"
+    );
     assert_eq!(value["deliberation"]["members"][0]["persona"], "historian");
+    assert_eq!(
+        value["deliberation"]["members"][0]["stakeholder"]["representation"],
+        "technical_sme"
+    );
+    assert_eq!(
+        value["deliberation"]["members"][0]["stakeholder"]["principal"],
+        "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+    );
     assert_eq!(
         value["deliberation"]["reports"][0]["dissent_digests"][0],
         "1717171717171717171717171717171717171717171717171717171717171717"
@@ -192,7 +205,9 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
         component.poll();
         let rendered = render(&component);
         if rendered.contains("Stable registry revision 3") {
+            assert!(rendered.contains("right ensemble? Yes"));
             assert!(rendered.contains("persona Historian"));
+            assert!(rendered.contains("stakeholder TechnicalSme"));
             assert!(rendered.contains("evidence=1 dissent=1"));
             assert!(rendered.contains("resolution: authorized choice"));
             drop(component);

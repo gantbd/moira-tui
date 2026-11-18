@@ -54,6 +54,14 @@ fn view_json(value: d::DeliberationViewV1) -> serde_json::Value {
         "phase": phase(value.phase),
         "remaining_fuel": value.remaining_fuel,
         "question_digest": hex(&value.plan.question_digest),
+        "admission": {
+            "fitness": fitness(value.plan.admission.fitness),
+            "affected_population_digest": hex(&value.plan.admission.affected_population_digest),
+            "stakeholder_map_digest": hex(&value.plan.admission.stakeholder_map_digest),
+            "coverage_manifest_digest": hex(&value.plan.admission.coverage_manifest_digest),
+            "equity_assessment_digest": hex(&value.plan.admission.equity_assessment_digest),
+            "assessor_principal": hex(&value.plan.admission.assessor_principal),
+        },
         "method": {
             "machine_digest": hex(&value.plan.method.machine_digest),
             "state_digest": hex(&value.plan.method.state_digest),
@@ -73,6 +81,14 @@ fn view_json(value: d::DeliberationViewV1) -> serde_json::Value {
         "members": value.plan.members.into_iter().map(|value| serde_json::json!({
             "id": hex(&value.id.0),
             "persona": persona(value.lens),
+            "stakeholder": {
+                "principal": hex(&value.stakeholder.principal),
+                "constituency_digest": hex(&value.stakeholder.constituency_digest),
+                "representation": representation(value.stakeholder.representation),
+                "accountable_principal": value.stakeholder.accountable_principal.map(|value| hex(&value)),
+                "mandate_digest": value.stakeholder.mandate_digest.map(|value| hex(&value)),
+                "conflict_digest": value.stakeholder.conflict_digest.map(|value| hex(&value)),
+            },
             "concern_root_digest": hex(&value.concern_root_digest),
             "grounding": {
                 "authority_digest": hex(&value.grounding.authority_digest),
@@ -173,6 +189,23 @@ fn persona(value: d::PersonaLensV1) -> &'static str {
         d::PersonaLensV1::Researcher => "researcher",
         d::PersonaLensV1::RigorReviewer => "rigor_reviewer",
         d::PersonaLensV1::ConvergenceFacilitator => "convergence_facilitator",
+    }
+}
+
+fn fitness(value: d::EnsembleFitnessV1) -> &'static str {
+    match value {
+        d::EnsembleFitnessV1::Yes => "yes",
+        d::EnsembleFitnessV1::No => "no",
+        d::EnsembleFitnessV1::Contested => "contested",
+    }
+}
+
+fn representation(value: d::StakeholderRepresentationV1) -> &'static str {
+    match value {
+        d::StakeholderRepresentationV1::ActualStakeholder => "actual_stakeholder",
+        d::StakeholderRepresentationV1::AuthorizedRepresentative => "authorized_representative",
+        d::StakeholderRepresentationV1::AgentModeledPerspective => "agent_modeled_perspective",
+        d::StakeholderRepresentationV1::TechnicalSme => "technical_sme",
     }
 }
 

@@ -55,7 +55,12 @@ fn component_renders_persona_dissent_candidates_and_retained_choice() {
         let rendered = render(&component);
         if rendered.contains("Stable registry revision 7") {
             assert!(rendered.contains("phase: Resolved"));
+            assert!(rendered.contains("right ensemble? Yes"));
+            assert!(rendered.contains("ensemble coverage:"));
+            assert!(rendered.contains("ensemble equity:"));
             assert!(rendered.contains("persona Historian"));
+            assert!(rendered.contains("stakeholder TechnicalSme"));
+            assert!(rendered.contains("stakeholder standing: accountable=none"));
             assert!(rendered.contains("evidence=2 dissent=1"));
             assert!(rendered.contains("candidate 07070707"));
             assert!(rendered.contains("resolution: authorized choice"));
