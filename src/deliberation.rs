@@ -29,6 +29,13 @@ pub enum DeliberationObservation {
     Transport,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HumanGateAgendaObservation {
+    pub registry_revision: u64,
+    pub deliberation: d::DeliberationIdV1,
+    pub request: d::HumanGateRequestV1,
+}
+
 pub fn observe_deliberation<P: DeliberationServicePort>(
     client: &mut DeliberationReadOnlyClient<P>,
     id: d::DeliberationIdV1,
@@ -131,6 +138,20 @@ impl DeliberationComponent {
                 }
             }
         }
+    }
+
+    /// Returns only an exact, stably observed pending gate. A settled response
+    /// is not operator work, and absence is not inferred as approval.
+    pub fn operator_agenda_observation(&self) -> Option<HumanGateAgendaObservation> {
+        let (registry_revision, view) = self.observation.as_ref()?;
+        if view.human_gate_response.is_some() {
+            return None;
+        }
+        Some(HumanGateAgendaObservation {
+            registry_revision: *registry_revision,
+            deliberation: view.plan.id,
+            request: view.human_gate_request?,
+        })
     }
 
     pub fn update(&mut self, input: Input, focused: bool) -> Lifecycle {

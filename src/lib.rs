@@ -15,7 +15,8 @@ mod reconciliation_control;
 pub use agent::AgentComponent;
 pub use cancel_control::{CancelControlInput, CancellationControlComponent};
 pub use deliberation::{
-    DeliberationComponent, DeliberationObservation, deliberation_view_json, observe_deliberation,
+    DeliberationComponent, DeliberationObservation, HumanGateAgendaObservation,
+    deliberation_view_json, observe_deliberation,
 };
 pub use open_control::{OpenControlComponent, OpenControlInput};
 pub use participation::ParticipationComponent;

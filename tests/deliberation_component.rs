@@ -7,6 +7,7 @@ use ratatui::{Terminal, backend::TestBackend};
 struct Port {
     step: usize,
     stale: bool,
+    pending: bool,
 }
 
 impl DeliberationServicePort for Port {
@@ -32,7 +33,11 @@ impl DeliberationServicePort for Port {
                         deliberation: d::DeliberationIdV1([1; 16])
                     }
                 );
-                d::OutcomeV1::Deliberation(Some(Box::new(view())))
+                let mut value = view();
+                if self.pending {
+                    value.human_gate_response = None;
+                }
+                d::OutcomeV1::Deliberation(Some(Box::new(value)))
             }
             _ => unreachable!(),
         };
@@ -47,6 +52,7 @@ fn component_renders_persona_dissent_candidates_and_retained_choice() {
         Port {
             step: 0,
             stale: false,
+            pending: false,
         },
         d::DeliberationIdV1([1; 16]),
     );
@@ -81,6 +87,7 @@ fn component_rejects_a_view_observed_across_registry_revision_change() {
         Port {
             step: 0,
             stale: true,
+            pending: false,
         },
         d::DeliberationIdV1([1; 16]),
     );
@@ -94,6 +101,30 @@ fn component_rejects_a_view_observed_across_registry_revision_change() {
         thread::sleep(Duration::from_millis(1));
     }
     panic!("component admitted a mixed-revision deliberation");
+}
+
+#[test]
+fn operator_agenda_exposes_only_the_exact_pending_human_gate() {
+    let mut component = moira_tui::DeliberationComponent::new(
+        Port {
+            step: 0,
+            stale: false,
+            pending: true,
+        },
+        d::DeliberationIdV1([1; 16]),
+    );
+    for _ in 0..100 {
+        component.poll();
+        if let Some(observation) = component.operator_agenda_observation() {
+            assert_eq!(observation.registry_revision, 7);
+            assert_eq!(observation.deliberation, d::DeliberationIdV1([1; 16]));
+            assert_eq!(observation.request.id, d::HumanGateRequestIdV1([23; 16]));
+            assert_eq!(observation.request.reviewer, [24; 16]);
+            return;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    panic!("pending human gate did not reach the agenda projection");
 }
 
 #[test]
