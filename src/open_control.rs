@@ -1,6 +1,9 @@
 //! Closed, review/arm/confirm preparation of one governed agent-session open.
 
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::{
+    sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
+    thread::JoinHandle,
+};
 
 use moira_client::{
     AgentParticipationOpenClient, AgentParticipationReadOnlyClient, AgentParticipationServicePort,
@@ -44,8 +47,9 @@ enum Observation {
 }
 
 pub struct OpenControlComponent {
-    requests: SyncSender<Request>,
+    requests: Option<SyncSender<Request>>,
     replies: Receiver<Observation>,
+    worker: Option<JoinHandle<()>>,
     pending: bool,
     armed: bool,
     fenced: bool,
@@ -61,7 +65,7 @@ impl OpenControlComponent {
     {
         let (request_tx, request_rx) = sync_channel(1);
         let (reply_tx, reply_rx) = sync_channel(1);
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let mut port = Some(port);
             while let Ok(request) = request_rx.recv() {
                 let observation = match request {
@@ -114,8 +118,9 @@ impl OpenControlComponent {
             }
         });
         let mut value = Self {
-            requests: request_tx,
+            requests: Some(request_tx),
             replies: reply_rx,
+            worker: Some(worker),
             pending: false,
             armed: false,
             fenced: false,
@@ -162,6 +167,16 @@ impl OpenControlComponent {
             && self.view.as_ref().is_some_and(|view| {
                 matches!(view.pending, Some(participation::OperationV1::Open { .. }))
             })
+    }
+
+    /// Close the prepared review's owner session before a separate owner
+    /// worker connects. The local owner serves one authenticated session at a
+    /// time, so retaining this port would serialize the worker behind an idle
+    /// UI connection.
+    pub fn release_for_dispatch(self) -> bool {
+        let ready = self.dispatch_ready();
+        drop(self);
+        ready
     }
 
     pub fn update(&mut self, input: OpenControlInput, focused: bool) -> Lifecycle {
@@ -247,7 +262,11 @@ impl OpenControlComponent {
     fn offer(&mut self, request: Request) {
         if self.pending {
             self.notice = "Agent-session open request already pending".into();
-        } else if self.requests.try_send(request).is_ok() {
+        } else if self
+            .requests
+            .as_ref()
+            .is_some_and(|requests| requests.try_send(request).is_ok())
+        {
             self.pending = true;
             self.notice = match request {
                 Request::Refresh => "Agent-session open inspection pending",
@@ -292,6 +311,15 @@ impl OpenControlComponent {
                 self.notice =
                     "Open-preparation outcome unknown; refresh inspects retained state".into();
             }
+        }
+    }
+}
+
+impl Drop for OpenControlComponent {
+    fn drop(&mut self) {
+        self.requests.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
     }
 }
