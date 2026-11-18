@@ -156,6 +156,14 @@ impl OpenControlComponent {
         self.armed
     }
 
+    pub fn dispatch_ready(&self) -> bool {
+        !self.pending
+            && !self.fenced
+            && self.view.as_ref().is_some_and(|view| {
+                matches!(view.pending, Some(participation::OperationV1::Open { .. }))
+            })
+    }
+
     pub fn update(&mut self, input: OpenControlInput, focused: bool) -> Lifecycle {
         if !focused {
             return Lifecycle::Running;
