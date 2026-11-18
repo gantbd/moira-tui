@@ -30,6 +30,17 @@ pub struct ParticipationComponent {
     notice: String,
 }
 
+/// Bounded contribution to a composition host's read-only operator agenda.
+/// It describes an owner-published wait; it does not grant the host permission
+/// to choose or confirm an option.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParticipationAgendaObservation {
+    pub revision: u64,
+    pub phase: String,
+    pub pending_operation: Option<&'static str>,
+    pub permission_option_count: Option<u8>,
+}
+
 impl ParticipationComponent {
     pub fn new<P>(port: P, participation: participation::ParticipationIdV1) -> Self
     where
@@ -71,6 +82,17 @@ impl ParticipationComponent {
                 }
             }
         }
+    }
+
+    pub fn operator_agenda_observation(&self) -> Option<ParticipationAgendaObservation> {
+        self.view
+            .as_ref()
+            .map(|view| ParticipationAgendaObservation {
+                revision: view.revision,
+                phase: format!("{:?}", view.phase),
+                pending_operation: view.pending.map(operation_kind),
+                permission_option_count: view.permission.map(|value| value.option_count),
+            })
     }
 
     pub fn update(&mut self, input: Input, focused: bool) -> Lifecycle {

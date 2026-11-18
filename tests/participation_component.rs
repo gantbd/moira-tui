@@ -70,6 +70,13 @@ fn component_renders_only_the_public_governed_projection() {
             assert!(
                 rendered.contains("not published: role/work mode · scope · delegation · budgets")
             );
+            let agenda = component
+                .operator_agenda_observation()
+                .expect("current participation contributes an agenda observation");
+            assert_eq!(agenda.revision, 14);
+            assert_eq!(agenda.phase, "AwaitingPermission");
+            assert_eq!(agenda.permission_option_count, Some(2));
+            assert_eq!(agenda.pending_operation, None);
             return;
         }
         thread::sleep(Duration::from_millis(1));
