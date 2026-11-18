@@ -32,13 +32,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let socket = PathBuf::from(args.next().ok_or("missing socket")?);
     let database = PathBuf::from(args.next().ok_or("missing database")?);
-    let pending = match args.next() {
-        None => false,
-        Some(value) if value == "pending" => true,
-        Some(_) => return Err("third argument must be pending".into()),
+    let mode = args.next();
+    let pending = mode.is_some();
+    let decision_packet = match mode.as_deref() {
+        None => HumanGateMaterialRefV1 {
+            owner_route: [60; 16],
+            artifact_route: [61; 16],
+            expected_revision: 62,
+            expected_sha256: [63; 32],
+        },
+        Some(value) if value == "pending" => HumanGateMaterialRefV1 {
+            owner_route: [60; 16],
+            artifact_route: [61; 16],
+            expected_revision: 62,
+            expected_sha256: [63; 32],
+        },
+        Some(value) if value == "pending-packet" => {
+            let revision = args
+                .next()
+                .ok_or("pending-packet requires a revision")?
+                .to_string_lossy()
+                .parse::<u64>()?;
+            let digest = args
+                .next()
+                .ok_or("pending-packet requires a SHA-256 digest")?;
+            HumanGateMaterialRefV1 {
+                owner_route: [60; 16],
+                artifact_route: [61; 16],
+                expected_revision: revision,
+                expected_sha256: parse_digest(&digest.to_string_lossy())?,
+            }
+        }
+        Some(_) => return Err("third argument must be pending or pending-packet".into()),
     };
     if args.next().is_some() {
-        return Err("usage: deliberation_fixture SOCKET DATABASE [pending]".into());
+        return Err(
+            "usage: deliberation_fixture SOCKET DATABASE [pending|pending-packet REVISION SHA256]"
+                .into(),
+        );
     }
     let mut store = open(&database)?;
     if store.revision().0 == 0 {
@@ -88,12 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     decision_digest: [51; 32],
                     material_revision_digest: [52; 32],
                     policy_digest: [53; 32],
-                    decision_packet: HumanGateMaterialRefV1 {
-                        owner_route: [60; 16],
-                        artifact_route: [61; 16],
-                        expected_revision: 62,
-                        expected_sha256: [63; 32],
-                    },
+                    decision_packet,
                     requested_at: 54,
                 },
             },
@@ -152,6 +178,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .serve_next()
             .map_err(|error| format!("deliberation daemon failed: {error:?}"))?;
     }
+}
+
+fn parse_digest(value: &str) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    if value.len() != 64 || !value.is_ascii() {
+        return Err("SHA-256 digest must be 64 lowercase hexadecimal digits".into());
+    }
+    let mut digest = [0; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        let pair = &value[index * 2..index * 2 + 2];
+        if !pair
+            .bytes()
+            .all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
+        {
+            return Err("SHA-256 digest must be 64 lowercase hexadecimal digits".into());
+        }
+        *byte = u8::from_str_radix(pair, 16)?;
+    }
+    Ok(digest)
 }
 
 fn open(database: &std::path::Path) -> Result<DeliberationSqliteStore, Box<dyn std::error::Error>> {
