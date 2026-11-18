@@ -8,7 +8,10 @@ use moira_core::deliberation::{
 };
 use moira_local_daemon::unix::{Authenticator, DeliberationDaemon};
 use moira_protocol::deliberation::*;
-use moira_service::{AccessV1, deliberation::DeliberationService};
+use moira_service::{
+    AccessV1,
+    deliberation::{DeliberationService, HumanGateAccessV1},
+};
 use moira_sqlite::deliberation::{DeliberationSqliteStore, DeliberationStoreLimitsV1};
 use moira_wire::LimitsV1;
 
@@ -51,6 +54,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             2,
         )?;
+        apply(
+            &mut service,
+            2,
+            MutationV1::Resolve {
+                deliberation: DeliberationIdV1([1; 16]),
+                resolution: ResolutionV1::AuthorizedChoice {
+                    frontier: vec![CandidateIdV1([29; 16])],
+                    selected: CandidateIdV1([29; 16]),
+                    authority: AuthorityRefV1 {
+                        decision: AuthorityDecisionIdV1([45; 16]),
+                        subject: AuthoritySubjectIdV1([46; 16]),
+                        epoch: 47,
+                    },
+                },
+            },
+            3,
+        )?;
+        apply(
+            &mut service,
+            3,
+            MutationV1::RequestHumanGate {
+                deliberation: DeliberationIdV1([1; 16]),
+                request: HumanGateRequestV1 {
+                    id: HumanGateRequestIdV1([48; 16]),
+                    reviewer: [49; 16],
+                    finding_digest: [50; 32],
+                    decision_digest: [51; 32],
+                    material_revision_digest: [52; 32],
+                    policy_digest: [53; 32],
+                    requested_at: 54,
+                },
+            },
+            4,
+        )?;
+        match service.execute_human_gate_authorized(
+            AccessV1 {
+                read: true,
+                mutate: true,
+            },
+            HumanGateAccessV1 {
+                decision: [55; 16],
+                subject: [49; 16],
+                epoch: 56,
+            },
+            HumanGateOperationV1 {
+                deliberation: DeliberationIdV1([1; 16]),
+                expected_revision: 4,
+                response: HumanGateResponseSubmissionV1 {
+                    id: HumanGateResponseIdV1([57; 16]),
+                    request: HumanGateRequestIdV1([48; 16]),
+                    disposition: HumanGateDispositionV1::ChangesRequested,
+                    rationale_digest: [58; 32],
+                    responded_at: 59,
+                },
+            },
+        )? {
+            ReplyV1::Accepted(OutcomeV1::Applied {
+                revision: 5,
+                replayed: false,
+                ..
+            }) => {}
+            reply => return Err(format!("unexpected fixture gate reply: {reply:?}").into()),
+        }
         store = service.into_store();
     }
     let mut daemon = DeliberationDaemon::bind_new(

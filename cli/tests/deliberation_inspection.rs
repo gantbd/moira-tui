@@ -6,7 +6,10 @@ use moira_core::deliberation::{
 };
 use moira_local_daemon::unix::{Authenticator, DeliberationDaemon};
 use moira_protocol::deliberation::*;
-use moira_service::{AccessV1, deliberation::DeliberationService};
+use moira_service::{
+    AccessV1,
+    deliberation::{DeliberationService, HumanGateAccessV1},
+};
 use moira_sqlite::deliberation::{DeliberationSqliteStore, DeliberationStoreLimitsV1};
 use moira_wire::LimitsV1;
 use ratatui::{Terminal, backend::TestBackend};
@@ -132,6 +135,54 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
             },
             3,
         );
+        apply(
+            &mut service,
+            3,
+            MutationV1::RequestHumanGate {
+                deliberation: DeliberationIdV1([1; 16]),
+                request: HumanGateRequestV1 {
+                    id: HumanGateRequestIdV1([27; 16]),
+                    reviewer: [28; 16],
+                    finding_digest: [29; 32],
+                    decision_digest: [30; 32],
+                    material_revision_digest: [31; 32],
+                    policy_digest: [32; 32],
+                    requested_at: 33,
+                },
+            },
+            4,
+        );
+        assert!(matches!(
+            service
+                .execute_human_gate_authorized(
+                    AccessV1 {
+                        read: true,
+                        mutate: true,
+                    },
+                    HumanGateAccessV1 {
+                        decision: [34; 16],
+                        subject: [28; 16],
+                        epoch: 35,
+                    },
+                    HumanGateOperationV1 {
+                        deliberation: DeliberationIdV1([1; 16]),
+                        expected_revision: 4,
+                        response: HumanGateResponseSubmissionV1 {
+                            id: HumanGateResponseIdV1([36; 16]),
+                            request: HumanGateRequestIdV1([27; 16]),
+                            disposition: HumanGateDispositionV1::Deferred,
+                            rationale_digest: [37; 32],
+                            responded_at: 38,
+                        },
+                    },
+                )
+                .unwrap(),
+            ReplyV1::Accepted(OutcomeV1::Applied {
+                revision: 5,
+                replayed: false,
+                ..
+            })
+        ));
     }
     let mut daemon = DeliberationDaemon::bind_new(
         &fixture.socket,
@@ -155,7 +206,7 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["capability"], "deliberation.inspect.v1");
     assert_eq!(value["status"], "current");
-    assert_eq!(value["registry_revision"], 3);
+    assert_eq!(value["registry_revision"], 5);
     assert_eq!(value["deliberation"]["phase"], "resolved");
     assert_eq!(value["deliberation"]["admission"]["fitness"], "yes");
     assert_eq!(
@@ -183,6 +234,15 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
         value["deliberation"]["resolution"]["frontier"][0],
         "05050505050505050505050505050505"
     );
+    assert_eq!(value["deliberation"]["human_gate"]["status"], "settled");
+    assert_eq!(
+        value["deliberation"]["human_gate"]["response"]["disposition"],
+        "deferred"
+    );
+    assert_eq!(
+        value["deliberation"]["human_gate"]["response"]["authority"]["subject"],
+        "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c"
+    );
     worker.join().unwrap();
 
     let mut daemon = DeliberationDaemon::bind_new(
@@ -204,12 +264,15 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
     for _ in 0..100 {
         component.poll();
         let rendered = render(&component);
-        if rendered.contains("Stable registry revision 3") {
+        if rendered.contains("Stable registry revision 5") {
             assert!(rendered.contains("right ensemble? Yes"));
             assert!(rendered.contains("persona Historian"));
             assert!(rendered.contains("stakeholder TechnicalSme"));
             assert!(rendered.contains("evidence=1 dissent=1"));
             assert!(rendered.contains("resolution: authorized choice"));
+            assert!(rendered.contains("human gate: deferred"));
+            assert!(rendered.contains("human gate material:"));
+            assert!(rendered.contains("human gate authority:"));
             drop(component);
             worker.join().unwrap();
             return;

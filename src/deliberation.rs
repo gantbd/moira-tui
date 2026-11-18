@@ -304,6 +304,9 @@ pub fn deliberation_view_json(value: d::DeliberationViewV1) -> serde_json::Value
             "dissent_digests": value.dissent_digests.into_iter().map(|value| hex(&value)).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "resolution": value.resolution.map(resolution_json),
+        "human_gate": value.human_gate_request.map(|request| {
+            human_gate_json(request, value.human_gate_response)
+        }),
         "limits": {
             "max_claims": value.limits.max_claims,
             "max_criteria": value.limits.max_criteria,
@@ -314,6 +317,45 @@ pub fn deliberation_view_json(value: d::DeliberationViewV1) -> serde_json::Value
             "max_fuel": value.limits.max_fuel,
         },
     })
+}
+
+fn human_gate_json(
+    request: d::HumanGateRequestV1,
+    response: Option<d::HumanGateResponseV1>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "status": if response.is_some() { "settled" } else { "pending" },
+        "request": {
+            "id": hex(&request.id.0),
+            "reviewer": hex(&request.reviewer),
+            "finding_digest": hex(&request.finding_digest),
+            "decision_digest": hex(&request.decision_digest),
+            "material_revision_digest": hex(&request.material_revision_digest),
+            "policy_digest": hex(&request.policy_digest),
+            "requested_at": request.requested_at,
+        },
+        "response": response.map(|response| serde_json::json!({
+            "id": hex(&response.id.0),
+            "request": hex(&response.request.0),
+            "disposition": human_gate_disposition(response.disposition),
+            "rationale_digest": hex(&response.rationale_digest),
+            "responded_at": response.responded_at,
+            "authority": {
+                "decision": hex(&response.authority.decision),
+                "subject": hex(&response.authority.subject),
+                "epoch": response.authority.epoch,
+            },
+        })),
+    })
+}
+
+fn human_gate_disposition(value: d::HumanGateDispositionV1) -> &'static str {
+    match value {
+        d::HumanGateDispositionV1::Approved => "approved",
+        d::HumanGateDispositionV1::Rejected => "rejected",
+        d::HumanGateDispositionV1::Deferred => "deferred",
+        d::HumanGateDispositionV1::ChangesRequested => "changes_requested",
+    }
 }
 
 fn resolution_json(value: d::ResolutionV1) -> serde_json::Value {
@@ -474,6 +516,10 @@ fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'stat
         ));
     }
     values.push(resolution_summary(view.resolution.as_ref()));
+    values.extend(human_gate_summary(
+        view.human_gate_request.as_ref(),
+        view.human_gate_response.as_ref(),
+    ));
     values
         .into_iter()
         .enumerate()
@@ -484,6 +530,45 @@ fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'stat
             ))
         })
         .collect()
+}
+
+fn human_gate_summary(
+    request: Option<&d::HumanGateRequestV1>,
+    response: Option<&d::HumanGateResponseV1>,
+) -> Vec<String> {
+    let Some(request) = request else {
+        return vec!["human gate: not requested".into()];
+    };
+    let mut values = vec![format!(
+        "human gate: {} request={} reviewer={} requested-at={}",
+        response.map_or("pending", |value| human_gate_disposition(value.disposition)),
+        identity(request.id.0),
+        identity(request.reviewer),
+        request.requested_at,
+    )];
+    values.push(format!(
+        "human gate material: finding={} decision={} revision={} policy={}",
+        digest(request.finding_digest),
+        digest(request.decision_digest),
+        digest(request.material_revision_digest),
+        digest(request.policy_digest),
+    ));
+    if let Some(response) = response {
+        values.push(format!(
+            "human gate response: id={} request={} rationale={} responded-at={}",
+            identity(response.id.0),
+            identity(response.request.0),
+            digest(response.rationale_digest),
+            response.responded_at,
+        ));
+        values.push(format!(
+            "human gate authority: decision={} subject={} epoch={}",
+            identity(response.authority.decision),
+            identity(response.authority.subject),
+            response.authority.epoch,
+        ));
+    }
+    values
 }
 
 fn optional_identity(value: Option<[u8; 16]>) -> String {

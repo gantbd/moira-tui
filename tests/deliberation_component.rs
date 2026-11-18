@@ -64,6 +64,9 @@ fn component_renders_persona_dissent_candidates_and_retained_choice() {
             assert!(rendered.contains("evidence=2 dissent=1"));
             assert!(rendered.contains("candidate 07070707"));
             assert!(rendered.contains("resolution: authorized choice"));
+            assert!(rendered.contains("human gate: changes_requested"));
+            assert!(rendered.contains("human gate material:"));
+            assert!(rendered.contains("human gate authority:"));
             assert!(rendered.contains("no frontier or authority inferred"));
             return;
         }
@@ -105,6 +108,21 @@ fn reusable_projection_preserves_contested_admission_and_stakeholder_standing() 
         value["members"][0]["stakeholder"]["accountable_principal"],
         serde_json::Value::Null
     );
+    assert_eq!(value["human_gate"]["status"], "settled");
+    assert_eq!(
+        value["human_gate"]["response"]["disposition"],
+        "changes_requested"
+    );
+    assert_eq!(
+        value["human_gate"]["request"]["material_revision_digest"],
+        "2525252525252525252525252525252525252525252525252525252525252525"
+    );
+
+    let mut pending = view();
+    pending.human_gate_response = None;
+    let pending = moira_tui::deliberation_view_json(pending);
+    assert_eq!(pending["human_gate"]["status"], "pending");
+    assert_eq!(pending["human_gate"]["response"], serde_json::Value::Null);
 }
 
 fn render(component: &moira_tui::DeliberationComponent) -> String {
@@ -189,6 +207,27 @@ fn view() -> d::DeliberationViewV1 {
                 decision: d::AuthorityDecisionIdV1([20; 16]),
                 subject: d::AuthoritySubjectIdV1([21; 16]),
                 epoch: 22,
+            },
+        }),
+        human_gate_request: Some(d::HumanGateRequestV1 {
+            id: d::HumanGateRequestIdV1([23; 16]),
+            reviewer: [24; 16],
+            finding_digest: [35; 32],
+            decision_digest: [36; 32],
+            material_revision_digest: [37; 32],
+            policy_digest: [38; 32],
+            requested_at: 39,
+        }),
+        human_gate_response: Some(d::HumanGateResponseV1 {
+            id: d::HumanGateResponseIdV1([40; 16]),
+            request: d::HumanGateRequestIdV1([23; 16]),
+            disposition: d::HumanGateDispositionV1::ChangesRequested,
+            rationale_digest: [41; 32],
+            responded_at: 42,
+            authority: d::HumanGateAuthorityRefV1 {
+                decision: [43; 16],
+                subject: [24; 16],
+                epoch: 44,
             },
         }),
         remaining_fuel: 1,
