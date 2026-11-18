@@ -353,6 +353,7 @@ fn human_gate_json(
             "decision_digest": hex(&request.decision_digest),
             "material_revision_digest": hex(&request.material_revision_digest),
             "policy_digest": hex(&request.policy_digest),
+            "decision_packet": human_gate_material_json(request.decision_packet),
             "requested_at": request.requested_at,
         },
         "response": response.map(|response| serde_json::json!({
@@ -360,6 +361,7 @@ fn human_gate_json(
             "request": hex(&response.request.0),
             "disposition": human_gate_disposition(response.disposition),
             "rationale_digest": hex(&response.rationale_digest),
+            "rationale": human_gate_material_json(response.rationale),
             "responded_at": response.responded_at,
             "authority": {
                 "decision": hex(&response.authority.decision),
@@ -367,6 +369,15 @@ fn human_gate_json(
                 "epoch": response.authority.epoch,
             },
         })),
+    })
+}
+
+fn human_gate_material_json(value: d::HumanGateMaterialRefV1) -> serde_json::Value {
+    serde_json::json!({
+        "owner_route": hex(&value.owner_route),
+        "artifact_route": hex(&value.artifact_route),
+        "expected_revision": value.expected_revision,
+        "expected_sha256": hex(&value.expected_sha256),
     })
 }
 
@@ -574,6 +585,13 @@ fn human_gate_summary(
         digest(request.material_revision_digest),
         digest(request.policy_digest),
     ));
+    values.push(format!(
+        "human gate packet: owner={} artifact={} revision={} sha256={}",
+        identity(request.decision_packet.owner_route),
+        identity(request.decision_packet.artifact_route),
+        request.decision_packet.expected_revision,
+        digest(request.decision_packet.expected_sha256),
+    ));
     if let Some(response) = response {
         values.push(format!(
             "human gate response: id={} request={} rationale={} responded-at={}",
@@ -581,6 +599,13 @@ fn human_gate_summary(
             identity(response.request.0),
             digest(response.rationale_digest),
             response.responded_at,
+        ));
+        values.push(format!(
+            "human gate rationale artifact: owner={} artifact={} revision={} sha256={}",
+            identity(response.rationale.owner_route),
+            identity(response.rationale.artifact_route),
+            response.rationale.expected_revision,
+            digest(response.rationale.expected_sha256),
         ));
         values.push(format!(
             "human gate authority: decision={} subject={} epoch={}",

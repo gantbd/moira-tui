@@ -148,6 +148,14 @@ fn reusable_projection_preserves_contested_admission_and_stakeholder_standing() 
         value["human_gate"]["request"]["material_revision_digest"],
         "2525252525252525252525252525252525252525252525252525252525252525"
     );
+    assert_eq!(
+        value["human_gate"]["request"]["decision_packet"]["expected_revision"],
+        47
+    );
+    assert_eq!(
+        value["human_gate"]["response"]["rationale"]["artifact_route"],
+        "32323232323232323232323232323232"
+    );
 
     let mut pending = view();
     pending.human_gate_response = None;
@@ -247,6 +255,12 @@ fn view() -> d::DeliberationViewV1 {
             decision_digest: [36; 32],
             material_revision_digest: [37; 32],
             policy_digest: [38; 32],
+            decision_packet: d::HumanGateMaterialRefV1 {
+                owner_route: [45; 16],
+                artifact_route: [46; 16],
+                expected_revision: 47,
+                expected_sha256: [48; 32],
+            },
             requested_at: 39,
         }),
         human_gate_response: Some(d::HumanGateResponseV1 {
@@ -254,6 +268,12 @@ fn view() -> d::DeliberationViewV1 {
             request: d::HumanGateRequestIdV1([23; 16]),
             disposition: d::HumanGateDispositionV1::ChangesRequested,
             rationale_digest: [41; 32],
+            rationale: d::HumanGateMaterialRefV1 {
+                owner_route: [49; 16],
+                artifact_route: [50; 16],
+                expected_revision: 51,
+                expected_sha256: [52; 32],
+            },
             responded_at: 42,
             authority: d::HumanGateAuthorityRefV1 {
                 decision: [43; 16],
