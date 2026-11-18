@@ -32,8 +32,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let socket = PathBuf::from(args.next().ok_or("missing socket")?);
     let database = PathBuf::from(args.next().ok_or("missing database")?);
+    let pending = match args.next() {
+        None => false,
+        Some(value) if value == "pending" => true,
+        Some(_) => return Err("third argument must be pending".into()),
+    };
     if args.next().is_some() {
-        return Err("usage: deliberation_fixture SOCKET DATABASE".into());
+        return Err("usage: deliberation_fixture SOCKET DATABASE [pending]".into());
     }
     let mut store = open(&database)?;
     if store.revision().0 == 0 {
@@ -88,34 +93,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             4,
         )?;
-        match service.execute_human_gate_authorized(
-            AccessV1 {
-                read: true,
-                mutate: true,
-            },
-            HumanGateAccessV1 {
-                decision: [55; 16],
-                subject: [49; 16],
-                epoch: 56,
-            },
-            HumanGateOperationV1 {
-                deliberation: DeliberationIdV1([1; 16]),
-                expected_revision: 4,
-                response: HumanGateResponseSubmissionV1 {
-                    id: HumanGateResponseIdV1([57; 16]),
-                    request: HumanGateRequestIdV1([48; 16]),
-                    disposition: HumanGateDispositionV1::ChangesRequested,
-                    rationale_digest: [58; 32],
-                    responded_at: 59,
+        if !pending {
+            match service.execute_human_gate_authorized(
+                AccessV1 {
+                    read: true,
+                    mutate: true,
                 },
-            },
-        )? {
-            ReplyV1::Accepted(OutcomeV1::Applied {
-                revision: 5,
-                replayed: false,
-                ..
-            }) => {}
-            reply => return Err(format!("unexpected fixture gate reply: {reply:?}").into()),
+                HumanGateAccessV1 {
+                    decision: [55; 16],
+                    subject: [49; 16],
+                    epoch: 56,
+                },
+                HumanGateOperationV1 {
+                    deliberation: DeliberationIdV1([1; 16]),
+                    expected_revision: 4,
+                    response: HumanGateResponseSubmissionV1 {
+                        id: HumanGateResponseIdV1([57; 16]),
+                        request: HumanGateRequestIdV1([48; 16]),
+                        disposition: HumanGateDispositionV1::ChangesRequested,
+                        rationale_digest: [58; 32],
+                        responded_at: 59,
+                    },
+                },
+            )? {
+                ReplyV1::Accepted(OutcomeV1::Applied {
+                    revision: 5,
+                    replayed: false,
+                    ..
+                }) => {}
+                reply => return Err(format!("unexpected fixture gate reply: {reply:?}").into()),
+            }
         }
         store = service.into_store();
     }
