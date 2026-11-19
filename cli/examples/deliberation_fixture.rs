@@ -161,6 +161,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }) => {}
                 reply => return Err(format!("unexpected fixture gate reply: {reply:?}").into()),
             }
+            let mut correlation = EnsembleCorrelationEvidenceV1::undisclosed(1);
+            correlation.dimensions[0] = CorrelationDimensionEvidenceV1 {
+                dimension: CorrelationDimensionV1::ExecutionPrincipal,
+                observed_members: 1,
+                distinct_values: 1,
+            };
+            correlation.dimensions[6] = CorrelationDimensionEvidenceV1 {
+                dimension: CorrelationDimensionV1::Grounding,
+                observed_members: 1,
+                distinct_values: 1,
+            };
+            correlation.first_pass = FirstPassExposureV1 {
+                committed_before_cross_review: 1,
+                exposed_before_commit: 0,
+                unknown: 0,
+            };
+            apply(
+                &mut service,
+                5,
+                MutationV1::BeginReview {
+                    deliberation: DeliberationIdV1([1; 16]),
+                    correlation,
+                },
+                6,
+            )?;
+            apply(
+                &mut service,
+                6,
+                MutationV1::SubmitFinding {
+                    deliberation: DeliberationIdV1([1; 16]),
+                    finding: ReviewFindingV1 {
+                        id: FindingIdV1([68; 16]),
+                        source_report: ReportIdV1([41; 16]),
+                        owner: [69; 16],
+                        finding_digest: [70; 32],
+                        evidence_digests: vec![[71; 32]],
+                        requires_human_gate: false,
+                    },
+                },
+                7,
+            )?;
         }
         store = service.into_store();
     }
@@ -287,6 +328,11 @@ fn apply(
         mutation,
     })? {
         ReplyV1::Accepted(OutcomeV1::Applied {
+            revision: actual,
+            replayed: false,
+            ..
+        })
+        | ReplyV1::Accepted(OutcomeV1::ReviewApplied {
             revision: actual,
             replayed: false,
             ..

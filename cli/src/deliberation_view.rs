@@ -12,12 +12,14 @@ pub fn run(
         DeliberationObservation::Current {
             registry_revision,
             view,
+            review,
         } => serde_json::json!({
             "version": 1,
             "capability": "deliberation.inspect.v1",
             "status": "current",
             "registry_revision": registry_revision,
             "deliberation": moira_tui::deliberation_view_json(*view),
+            "review": review.map(|value| moira_tui::review_view_json(*value)),
         }),
         DeliberationObservation::NotFound { registry_revision } => serde_json::json!({
             "version": 1,

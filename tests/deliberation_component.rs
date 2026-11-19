@@ -14,11 +14,11 @@ impl DeliberationServicePort for Port {
     type Error = ();
 
     fn execute(&mut self, command: d::CommandV1) -> Result<d::ReplyV1, Self::Error> {
-        let response = match self.step % 3 {
-            0 | 2 => {
+        let response = match self.step % 4 {
+            0 | 3 => {
                 assert_eq!(command, d::CommandV1::Status);
                 d::OutcomeV1::Status(d::StatusV1 {
-                    revision: if self.stale && self.step % 3 == 2 {
+                    revision: if self.stale && self.step % 4 == 3 {
                         8
                     } else {
                         7
@@ -38,6 +38,15 @@ impl DeliberationServicePort for Port {
                     value.human_gate_response = None;
                 }
                 d::OutcomeV1::Deliberation(Some(Box::new(value)))
+            }
+            2 => {
+                assert_eq!(
+                    command,
+                    d::CommandV1::Review {
+                        deliberation: d::DeliberationIdV1([1; 16])
+                    }
+                );
+                d::OutcomeV1::Review(Some(Box::new(review())))
             }
             _ => unreachable!(),
         };
@@ -73,6 +82,10 @@ fn component_renders_persona_dissent_candidates_and_retained_choice() {
             assert!(rendered.contains("human gate: changes_requested"));
             assert!(rendered.contains("human gate material:"));
             assert!(rendered.contains("human gate authority:"));
+            assert!(rendered.contains("review correlation: NotEstablished members=1"));
+            assert!(rendered.contains("first pass: committed-before-cross-review=1"));
+            assert!(rendered.contains("correlation execution_principal: observed"));
+            assert!(rendered.contains("correlation provider: unknown"));
             assert!(rendered.contains("no frontier or authority inferred"));
             return;
         }
@@ -162,6 +175,22 @@ fn reusable_projection_preserves_contested_admission_and_stakeholder_standing() 
     let pending = moira_tui::deliberation_view_json(pending);
     assert_eq!(pending["human_gate"]["status"], "pending");
     assert_eq!(pending["human_gate"]["response"], serde_json::Value::Null);
+}
+
+#[test]
+fn reusable_review_projection_preserves_correlation_and_missing_dimensions() {
+    let value = moira_tui::review_view_json(review());
+    assert_eq!(value["independence"], "not_established");
+    assert_eq!(
+        value["correlation"]["first_pass"]["committed_before_cross_review"],
+        1
+    );
+    assert_eq!(
+        value["correlation"]["dimensions"][0]["dimension"],
+        "execution_principal"
+    );
+    assert_eq!(value["correlation"]["dimensions"][0]["status"], "observed");
+    assert_eq!(value["correlation"]["dimensions"][4]["status"], "unknown");
 }
 
 fn render(component: &moira_tui::DeliberationComponent) -> String {
@@ -283,5 +312,36 @@ fn view() -> d::DeliberationViewV1 {
         }),
         remaining_fuel: 1,
         phase: d::DeliberationPhaseV1::Resolved,
+    }
+}
+
+fn review() -> d::ReviewViewV1 {
+    let mut correlation = d::EnsembleCorrelationEvidenceV1::undisclosed(1);
+    correlation.dimensions[0] = d::CorrelationDimensionEvidenceV1 {
+        dimension: d::CorrelationDimensionV1::ExecutionPrincipal,
+        observed_members: 1,
+        distinct_values: 1,
+    };
+    correlation.first_pass = d::FirstPassExposureV1 {
+        committed_before_cross_review: 1,
+        exposed_before_commit: 0,
+        unknown: 0,
+    };
+    d::ReviewViewV1 {
+        version: 2,
+        deliberation: d::DeliberationIdV1([1; 16]),
+        limits: d::ReviewLimitsV1 {
+            max_findings: 8,
+            max_rebuttals: 8,
+            max_evidence_per_item: 8,
+        },
+        reports: view().reports,
+        correlation,
+        independence: d::IndependenceAssessmentV1::NotEstablished,
+        admitted_human_gate_response: None,
+        findings: Vec::new(),
+        rebuttals: Vec::new(),
+        dispositions: Vec::new(),
+        phase: d::ReviewPhaseV1::FirstPassComplete,
     }
 }

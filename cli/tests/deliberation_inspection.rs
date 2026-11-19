@@ -195,6 +195,42 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
                 ..
             })
         ));
+        let mut correlation = EnsembleCorrelationEvidenceV1::undisclosed(1);
+        correlation.dimensions[0] = CorrelationDimensionEvidenceV1 {
+            dimension: CorrelationDimensionV1::ExecutionPrincipal,
+            observed_members: 1,
+            distinct_values: 1,
+        };
+        correlation.first_pass = FirstPassExposureV1 {
+            committed_before_cross_review: 1,
+            exposed_before_commit: 0,
+            unknown: 0,
+        };
+        apply(
+            &mut service,
+            5,
+            MutationV1::BeginReview {
+                deliberation: DeliberationIdV1([1; 16]),
+                correlation,
+            },
+            6,
+        );
+        apply(
+            &mut service,
+            6,
+            MutationV1::SubmitFinding {
+                deliberation: DeliberationIdV1([1; 16]),
+                finding: ReviewFindingV1 {
+                    id: FindingIdV1([47; 16]),
+                    source_report: ReportIdV1([21; 16]),
+                    owner: [48; 16],
+                    finding_digest: [49; 32],
+                    evidence_digests: vec![[50; 32]],
+                    requires_human_gate: false,
+                },
+            },
+            7,
+        );
     }
     let mut daemon = DeliberationDaemon::bind_new(
         &fixture.socket,
@@ -218,7 +254,21 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["capability"], "deliberation.inspect.v1");
     assert_eq!(value["status"], "current");
-    assert_eq!(value["registry_revision"], 5);
+    assert_eq!(value["registry_revision"], 7);
+    assert_eq!(value["review"]["independence"], "not_established");
+    assert_eq!(
+        value["review"]["correlation"]["first_pass"]["committed_before_cross_review"],
+        1
+    );
+    assert_eq!(
+        value["review"]["correlation"]["dimensions"][4]["status"],
+        "unknown"
+    );
+    assert_eq!(value["review"]["findings"][0]["id"], "2f".repeat(16));
+    assert_eq!(
+        value["review"]["findings"][0]["finding_digest"],
+        "31".repeat(32)
+    );
     assert_eq!(value["deliberation"]["phase"], "resolved");
     assert_eq!(value["deliberation"]["admission"]["fitness"], "yes");
     assert_eq!(
@@ -276,7 +326,7 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
     for _ in 0..100 {
         component.poll();
         let rendered = render(&component);
-        if rendered.contains("Stable registry revision 5") {
+        if rendered.contains("Stable registry revision 7") {
             assert!(rendered.contains("right ensemble? Yes"));
             assert!(rendered.contains("persona Historian"));
             assert!(rendered.contains("stakeholder TechnicalSme"));
@@ -285,6 +335,9 @@ fn headless_cli_observes_exact_methodical_facts_through_the_read_only_daemon() {
             assert!(rendered.contains("human gate: deferred"));
             assert!(rendered.contains("human gate material:"));
             assert!(rendered.contains("human gate authority:"));
+            assert!(rendered.contains("review correlation: NotEstablished members=1"));
+            assert!(rendered.contains("correlation provider: unknown"));
+            assert!(rendered.contains("finding 2f2f2f2f"));
             drop(component);
             worker.join().unwrap();
             return;
@@ -314,19 +367,26 @@ fn apply(
     mutation: MutationV1,
     revision: u64,
 ) {
-    assert!(matches!(
-        service
-            .execute(CommandV1::Apply {
-                expected_revision,
-                mutation,
-            })
-            .unwrap(),
+    let reply = service
+        .execute(CommandV1::Apply {
+            expected_revision,
+            mutation,
+        })
+        .unwrap();
+    let actual = match reply {
         ReplyV1::Accepted(OutcomeV1::Applied {
-            revision: actual,
+            revision,
             replayed: false,
             ..
-        }) if actual == revision
-    ));
+        })
+        | ReplyV1::Accepted(OutcomeV1::ReviewApplied {
+            revision,
+            replayed: false,
+            ..
+        }) => revision,
+        value => panic!("unexpected mutation reply: {value:?}"),
+    };
+    assert_eq!(actual, revision);
 }
 
 fn plan() -> DeliberationPlanV1 {

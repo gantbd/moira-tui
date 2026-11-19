@@ -18,6 +18,7 @@ pub enum DeliberationObservation {
     Current {
         registry_revision: u64,
         view: Box<d::DeliberationViewV1>,
+        review: Option<Box<d::ReviewViewV1>>,
     },
     NotFound {
         registry_revision: u64,
@@ -55,6 +56,14 @@ pub fn observe_deliberation<P: DeliberationServicePort>(
         }
         Err(_) => return DeliberationObservation::Transport,
     };
+    let review = match client.review(id) {
+        Ok(d::ReplyV1::Accepted(d::OutcomeV1::Review(value))) => value,
+        Ok(d::ReplyV1::Accepted(_)) => return DeliberationObservation::InvalidReply,
+        Ok(d::ReplyV1::Refused(refusal)) => {
+            return DeliberationObservation::Refused(format!("{refusal:?}"));
+        }
+        Err(_) => return DeliberationObservation::Transport,
+    };
     let second = match read_status(client.status()) {
         Ok(value) => value,
         Err(observation) => return observation,
@@ -67,6 +76,7 @@ pub fn observe_deliberation<P: DeliberationServicePort>(
         DeliberationObservation::Current {
             registry_revision: second.revision,
             view,
+            review,
         }
     } else {
         DeliberationObservation::NotFound {
@@ -90,7 +100,11 @@ pub struct DeliberationComponent {
     requests: SyncSender<()>,
     replies: Receiver<DeliberationObservation>,
     pending: bool,
-    observation: Option<(u64, Box<d::DeliberationViewV1>)>,
+    observation: Option<(
+        u64,
+        Box<d::DeliberationViewV1>,
+        Option<Box<d::ReviewViewV1>>,
+    )>,
     selected: usize,
     notice: String,
 }
@@ -143,7 +157,7 @@ impl DeliberationComponent {
     /// Returns only an exact, stably observed pending gate. A settled response
     /// is not operator work, and absence is not inferred as approval.
     pub fn operator_agenda_observation(&self) -> Option<HumanGateAgendaObservation> {
-        let (registry_revision, view) = self.observation.as_ref()?;
+        let (registry_revision, view, _) = self.observation.as_ref()?;
         if view.human_gate_response.is_some() {
             return None;
         }
@@ -169,10 +183,9 @@ impl DeliberationComponent {
                 Lifecycle::Running
             }
             Input::Down | Input::Open => {
-                let length = self
-                    .observation
-                    .as_ref()
-                    .map_or(0, |(_, view)| detail_lines(view, 0).len());
+                let length = self.observation.as_ref().map_or(0, |(_, view, review)| {
+                    detail_lines(view, review.as_deref(), 0).len()
+                });
                 if self.selected + 1 < length {
                     self.selected += 1;
                 }
@@ -196,7 +209,7 @@ impl DeliberationComponent {
         };
         let lines = self.observation.as_ref().map_or_else(
             || vec![Line::from("No stable deliberation observation")],
-            |(_, view)| detail_lines(view, self.selected),
+            |(_, view, review)| detail_lines(view, review.as_deref(), self.selected),
         );
         let visible = usize::from(body.height.saturating_sub(2)).max(1);
         let scroll = self.selected.saturating_add(1).saturating_sub(visible);
@@ -230,13 +243,14 @@ impl DeliberationComponent {
             DeliberationObservation::Current {
                 registry_revision,
                 view,
+                review,
             } => {
-                let length = detail_lines(&view, 0).len();
+                let length = detail_lines(&view, review.as_deref(), 0).len();
                 self.selected = self.selected.min(length.saturating_sub(1));
                 self.notice = format!(
                     "Stable registry revision {registry_revision}; no frontier or authority inferred"
                 );
-                self.observation = Some((registry_revision, view));
+                self.observation = Some((registry_revision, view, review));
             }
             DeliberationObservation::NotFound { registry_revision } => {
                 self.observation = None;
@@ -336,6 +350,77 @@ pub fn deliberation_view_json(value: d::DeliberationViewV1) -> serde_json::Value
             "max_evidence_per_report": value.limits.max_evidence_per_report,
             "max_dissent_per_report": value.limits.max_dissent_per_report,
             "max_fuel": value.limits.max_fuel,
+        },
+    })
+}
+
+/// Exact retained review projection. Correlation is disclosed as observed,
+/// missing, or shared; distinct values never become an independence claim.
+pub fn review_view_json(value: d::ReviewViewV1) -> serde_json::Value {
+    let summary = serde_json::json!({
+        "reports": value.reports.len(),
+        "findings": value.findings.len(),
+        "rebuttals": value.rebuttals.len(),
+        "dispositions": value.dispositions.len(),
+    });
+    serde_json::json!({
+        "protocol_version": value.version,
+        "deliberation": hex(&value.deliberation.0),
+        "phase": review_phase(value.phase),
+        "independence": independence(value.independence),
+        "correlation": {
+            "members": value.correlation.members,
+            "dimensions": value.correlation.dimensions.into_iter().map(|evidence| serde_json::json!({
+                "dimension": correlation_dimension(evidence.dimension),
+                "status": if evidence.observed_members == 0 { "unknown" } else { "observed" },
+                "observed_members": evidence.observed_members,
+                "distinct_values": evidence.distinct_values,
+                "shared": evidence.observed_members > 1 && evidence.distinct_values < evidence.observed_members,
+            })).collect::<Vec<_>>(),
+            "first_pass": {
+                "committed_before_cross_review": value.correlation.first_pass.committed_before_cross_review,
+                "exposed_before_commit": value.correlation.first_pass.exposed_before_commit,
+                "unknown": value.correlation.first_pass.unknown,
+            },
+        },
+        "summary": summary,
+        "reports": value.reports.into_iter().map(|report| serde_json::json!({
+            "id": hex(&report.id.0),
+            "member": hex(&report.member.0),
+            "output_digest": hex(&report.output_digest),
+            "evidence_digests": report.evidence_digests.into_iter().map(|digest| hex(&digest)).collect::<Vec<_>>(),
+            "dissent_digests": report.dissent_digests.into_iter().map(|digest| hex(&digest)).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "findings": value.findings.into_iter().map(|finding| serde_json::json!({
+            "id": hex(&finding.id.0),
+            "source_report": hex(&finding.source_report.0),
+            "owner": hex(&finding.owner),
+            "finding_digest": hex(&finding.finding_digest),
+            "evidence_digests": finding.evidence_digests.into_iter().map(|digest| hex(&digest)).collect::<Vec<_>>(),
+            "requires_human_gate": finding.requires_human_gate,
+        })).collect::<Vec<_>>(),
+        "rebuttals": value.rebuttals.into_iter().map(|rebuttal| serde_json::json!({
+            "id": hex(&rebuttal.id.0),
+            "finding": hex(&rebuttal.finding.0),
+            "member": hex(&rebuttal.member.0),
+            "rebuttal_digest": hex(&rebuttal.rebuttal_digest),
+            "evidence_digests": rebuttal.evidence_digests.into_iter().map(|digest| hex(&digest)).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "dispositions": value.dispositions.into_iter().map(|disposition| serde_json::json!({
+            "id": hex(&disposition.id.0),
+            "finding": hex(&disposition.finding.0),
+            "owner": hex(&disposition.owner),
+            "kind": finding_disposition(disposition.kind),
+            "rationale_digest": hex(&disposition.rationale_digest),
+            "evidence_digests": disposition.evidence_digests.into_iter().map(|digest| hex(&digest)).collect::<Vec<_>>(),
+            "human_gate_response": disposition.human_gate_response.map(|id| hex(&id.0)),
+            "decided_at": disposition.decided_at,
+        })).collect::<Vec<_>>(),
+        "human_gate_response": value.admitted_human_gate_response.map(|response| hex(&response.id.0)),
+        "limits": {
+            "max_findings": value.limits.max_findings,
+            "max_rebuttals": value.limits.max_rebuttals,
+            "max_evidence_per_item": value.limits.max_evidence_per_item,
         },
     })
 }
@@ -475,7 +560,11 @@ fn phase(value: d::DeliberationPhaseV1) -> &'static str {
     }
 }
 
-fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'static>> {
+fn detail_lines(
+    view: &d::DeliberationViewV1,
+    review: Option<&d::ReviewViewV1>,
+    selected: usize,
+) -> Vec<Line<'static>> {
     let mut values = vec![
         format!("phase: {:?}", view.phase),
         format!("remaining fuel: {}", view.remaining_fuel),
@@ -552,6 +641,7 @@ fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'stat
         view.human_gate_request.as_ref(),
         view.human_gate_response.as_ref(),
     ));
+    values.extend(review_summary(review));
     values
         .into_iter()
         .enumerate()
@@ -562,6 +652,133 @@ fn detail_lines(view: &d::DeliberationViewV1, selected: usize) -> Vec<Line<'stat
             ))
         })
         .collect()
+}
+
+fn review_summary(review: Option<&d::ReviewViewV1>) -> Vec<String> {
+    let Some(review) = review else {
+        return vec!["review: not begun; correlation not yet retained".into()];
+    };
+    let mut values = vec![
+        format!(
+            "review: {:?} reports={} findings={} rebuttals={} dispositions={}",
+            review.phase,
+            review.reports.len(),
+            review.findings.len(),
+            review.rebuttals.len(),
+            review.dispositions.len(),
+        ),
+        format!(
+            "review correlation: {:?} members={}",
+            review.independence, review.correlation.members
+        ),
+        format!(
+            "first pass: committed-before-cross-review={} exposed-before-commit={} unknown={}",
+            review.correlation.first_pass.committed_before_cross_review,
+            review.correlation.first_pass.exposed_before_commit,
+            review.correlation.first_pass.unknown,
+        ),
+    ];
+    values.extend(review.correlation.dimensions.iter().map(|evidence| {
+        format!(
+            "correlation {}: {} observed={} distinct={} shared={}",
+            correlation_dimension(evidence.dimension),
+            if evidence.observed_members == 0 {
+                "unknown"
+            } else {
+                "observed"
+            },
+            evidence.observed_members,
+            evidence.distinct_values,
+            evidence.observed_members > 1 && evidence.distinct_values < evidence.observed_members,
+        )
+    }));
+    for finding in &review.findings {
+        values.push(format!(
+            "finding {} report={} owner={}",
+            identity(finding.id.0),
+            identity(finding.source_report.0),
+            identity(finding.owner),
+        ));
+        values.push(format!(
+            "finding evidence: digest={} evidence={} human-gate={}",
+            digest(finding.finding_digest),
+            finding.evidence_digests.len(),
+            finding.requires_human_gate,
+        ));
+    }
+    for rebuttal in &review.rebuttals {
+        values.push(format!(
+            "rebuttal {} finding={} member={}",
+            identity(rebuttal.id.0),
+            identity(rebuttal.finding.0),
+            identity(rebuttal.member.0),
+        ));
+        values.push(format!(
+            "rebuttal evidence: digest={} evidence={}",
+            digest(rebuttal.rebuttal_digest),
+            rebuttal.evidence_digests.len(),
+        ));
+    }
+    for disposition in &review.dispositions {
+        values.push(format!(
+            "disposition {} finding={} owner={} kind={}",
+            identity(disposition.id.0),
+            identity(disposition.finding.0),
+            identity(disposition.owner),
+            finding_disposition(disposition.kind),
+        ));
+        values.push(format!(
+            "disposition evidence: rationale={} evidence={} human-gate={} decided-at={}",
+            digest(disposition.rationale_digest),
+            disposition.evidence_digests.len(),
+            disposition
+                .human_gate_response
+                .map_or_else(|| "none".into(), |id| identity(id.0)),
+            disposition.decided_at,
+        ));
+    }
+    values
+}
+
+fn review_phase(value: d::ReviewPhaseV1) -> &'static str {
+    match value {
+        d::ReviewPhaseV1::FirstPassComplete => "first_pass_complete",
+        d::ReviewPhaseV1::Challenged => "challenged",
+        d::ReviewPhaseV1::Disposed => "disposed",
+    }
+}
+
+fn independence(value: d::IndependenceAssessmentV1) -> &'static str {
+    match value {
+        d::IndependenceAssessmentV1::Correlated => "correlated",
+        d::IndependenceAssessmentV1::NotEstablished => "not_established",
+    }
+}
+
+fn correlation_dimension(value: d::CorrelationDimensionV1) -> &'static str {
+    match value {
+        d::CorrelationDimensionV1::ExecutionPrincipal => "execution_principal",
+        d::CorrelationDimensionV1::ExecutionProfile => "execution_profile",
+        d::CorrelationDimensionV1::ContextManifest => "context_manifest",
+        d::CorrelationDimensionV1::Model => "model",
+        d::CorrelationDimensionV1::Provider => "provider",
+        d::CorrelationDimensionV1::Prompt => "prompt",
+        d::CorrelationDimensionV1::Grounding => "grounding",
+        d::CorrelationDimensionV1::EvidenceScope => "evidence_scope",
+        d::CorrelationDimensionV1::Organization => "organization",
+    }
+}
+
+fn finding_disposition(value: d::FindingDispositionKindV1) -> &'static str {
+    match value {
+        d::FindingDispositionKindV1::Accepted => "accepted",
+        d::FindingDispositionKindV1::Mitigated => "mitigated",
+        d::FindingDispositionKindV1::Tested => "tested",
+        d::FindingDispositionKindV1::Deferred => "deferred",
+        d::FindingDispositionKindV1::RiskAccepted => "risk_accepted",
+        d::FindingDispositionKindV1::Disputed => "disputed",
+        d::FindingDispositionKindV1::OutOfScope => "out_of_scope",
+    }
 }
 
 fn human_gate_summary(

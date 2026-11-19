@@ -16,7 +16,7 @@ pub use agent::AgentComponent;
 pub use cancel_control::{CancelControlInput, CancellationControlComponent};
 pub use deliberation::{
     DeliberationComponent, DeliberationObservation, HumanGateAgendaObservation,
-    deliberation_view_json, observe_deliberation,
+    deliberation_view_json, observe_deliberation, review_view_json,
 };
 pub use open_control::{OpenControlComponent, OpenControlInput};
 pub use participation::ParticipationComponent;
